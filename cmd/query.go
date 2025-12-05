@@ -93,7 +93,7 @@ func init() {
 
 	// Backward compatibility aliases
 	queryCmd.Flags().IntVarP(&contextLines, "before", "B", 0, "Alias for --context")
-	queryCmd.Flags().MarkHidden("before")
+	_ = queryCmd.Flags().MarkHidden("before")
 }
 
 func runQuery(cmd *cobra.Command, args []string) error {
@@ -132,7 +132,7 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open source: %w", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	ctx := context.Background()
 	Debugf("Source type: %s", src.Type())
@@ -189,13 +189,13 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine output writer
-	var writer *os.File = os.Stdout
+	writer := os.Stdout
 	if exportFile != "" {
 		writer, err = os.Create(exportFile)
 		if err != nil {
 			return fmt.Errorf("failed to create export file: %w", err)
 		}
-		defer writer.Close()
+		defer func() { _ = writer.Close() }()
 	}
 
 	// Format output with highlighting
@@ -415,7 +415,7 @@ func parseTimeArg(input string) (time.Time, error) {
 	matches := re.FindStringSubmatch(input)
 	if matches != nil {
 		value := 0
-		fmt.Sscanf(matches[1], "%d", &value)
+		_, _ = fmt.Sscanf(matches[1], "%d", &value)
 		unit := matches[2]
 		var duration time.Duration
 		switch unit {

@@ -49,7 +49,7 @@ func runStreams(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	ctx := context.Background()
 	render.Status("Listing streams from %s...", sourceURI)

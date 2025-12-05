@@ -74,11 +74,11 @@ func runSources(cmd *cobra.Command, args []string) error {
 	for _, name := range names {
 		s := cfg.Sources[name]
 		aliasName := ui.LabelStyle.Render(fmt.Sprintf("@%-*s", maxLen, name))
-		fmt.Fprintf(os.Stdout, "%s  %s", aliasName, s.URI)
+		_, _ = fmt.Fprintf(os.Stdout, "%s  %s", aliasName, s.URI)
 		if s.Format != "" {
-			fmt.Fprintf(os.Stdout, "  [format: %s]", s.Format)
+			_, _ = fmt.Fprintf(os.Stdout, "  [format: %s]", s.Format)
 		}
-		fmt.Fprintln(os.Stdout)
+		_, _ = fmt.Fprintln(os.Stdout)
 	}
 
 	if cfg.DefaultSource != "" {

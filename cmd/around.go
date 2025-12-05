@@ -6,7 +6,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/jmurray2011/clew/internal/cases"
 	"github.com/jmurray2011/clew/internal/output"
 	"github.com/jmurray2011/clew/internal/source"
 
@@ -80,7 +79,7 @@ func runAround(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open source: %w", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	render.Status("Querying logs around %s (±%s)...", centerTime.Format("15:04:05"), aroundWindow)
 
@@ -141,31 +140,3 @@ func parseTimestamp(input string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("invalid timestamp format (use RFC3339: 2025-12-04T10:30:00Z)")
 }
 
-// cacheAroundPtrs caches @ptr values with metadata for cross-account evidence support
-// Deprecated: use cachePtrsFromEntries from query.go instead
-func cacheAroundPtrs(entries []source.Entry, src source.Source) {
-	mgr, err := cases.NewManager()
-	if err != nil {
-		return // silently ignore
-	}
-
-	meta := src.Metadata()
-	var ptrEntries []cases.PtrEntry
-	for _, e := range entries {
-		if e.Ptr != "" {
-			ptrEntries = append(ptrEntries, cases.PtrEntry{
-				Ptr:       e.Ptr,
-				LogGroup:  meta.URI,
-				LogStream: e.Stream,
-				Profile:   meta.Profile,
-				AccountID: meta.AccountID,
-			})
-		}
-	}
-
-	if len(ptrEntries) == 0 {
-		return
-	}
-
-	_ = mgr.SavePtrCacheWithMetadata(ptrEntries)
-}

@@ -130,7 +130,7 @@ func (s *Source) queryFile(ctx context.Context, filepath string, params source.Q
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var results []source.Entry
 	scanner := bufio.NewScanner(f)
@@ -239,22 +239,22 @@ func (s *Source) Tail(ctx context.Context, params source.TailParams) (<-chan sou
 	// Open file and seek to end
 	f, err := os.Open(filePath)
 	if err != nil {
-		watcher.Close()
+		_ = watcher.Close()
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
 
 	// Seek to end of file
 	offset, err := f.Seek(0, io.SeekEnd)
 	if err != nil {
-		f.Close()
-		watcher.Close()
+		_ = f.Close()
+		_ = watcher.Close()
 		return nil, fmt.Errorf("failed to seek to end: %w", err)
 	}
 
 	// Add file to watcher
 	if err := watcher.Add(filePath); err != nil {
-		f.Close()
-		watcher.Close()
+		_ = f.Close()
+		_ = watcher.Close()
 		return nil, fmt.Errorf("failed to watch file: %w", err)
 	}
 
@@ -268,20 +268,20 @@ func (s *Source) Tail(ctx context.Context, params source.TailParams) (<-chan sou
 // tailLoop handles the actual tailing logic in a goroutine.
 func (s *Source) tailLoop(ctx context.Context, f *os.File, watcher *fsnotify.Watcher, filePath string, offset int64, params source.TailParams, events chan<- source.Event) {
 	defer close(events)
-	defer f.Close()
-	defer watcher.Close()
+	defer func() { _ = f.Close() }()
+	defer func() { _ = watcher.Close() }()
 
 	reader := bufio.NewReader(f)
 	lineNum := 0
 
 	// Count initial lines (for accurate line numbers)
 	initialOffset := offset
-	f.Seek(0, io.SeekStart)
+	_, _ = f.Seek(0, io.SeekStart)
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		lineNum++
 	}
-	f.Seek(initialOffset, io.SeekStart)
+	_, _ = f.Seek(initialOffset, io.SeekStart)
 	reader.Reset(f)
 
 	var currentEntry *source.Entry
@@ -306,11 +306,8 @@ func (s *Source) tailLoop(ctx context.Context, f *os.File, watcher *fsnotify.Wat
 					line, err := reader.ReadString('\n')
 					if err != nil {
 						if err == io.EOF {
-							// Partial line, put it back
-							if len(line) > 0 {
-								// Save partial line for next read
-								// Note: bufio.Reader doesn't have UnreadString, so we handle this differently
-							}
+							// Partial line - we can't unread it with bufio.Reader,
+							// so we just discard and wait for more data
 							break
 						}
 						return
@@ -352,13 +349,13 @@ func (s *Source) tailLoop(ctx context.Context, f *os.File, watcher *fsnotify.Wat
 				time.Sleep(100 * time.Millisecond) // Small delay for rotation to complete
 				newFile, err := os.Open(filePath)
 				if err == nil {
-					f.Close()
+					_ = f.Close()
 					f = newFile
 					reader.Reset(f)
 					lineNum = 0
 					// Re-add to watcher
-					watcher.Remove(filePath)
-					watcher.Add(filePath)
+					_ = watcher.Remove(filePath)
+					_ = watcher.Add(filePath)
 				}
 			}
 
@@ -408,7 +405,7 @@ func (s *Source) GetRecord(ctx context.Context, ptr string) (*source.Entry, erro
 	if err != nil {
 		return nil, fmt.Errorf("cannot open file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	lineNum := 0
@@ -449,7 +446,7 @@ func (s *Source) FetchContext(ctx context.Context, entry source.Entry, before, a
 	if err != nil {
 		return nil, nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Read all lines into memory for context retrieval
 	var lines []string
@@ -588,7 +585,7 @@ func DetectFormat(filepath string) Format {
 	if err != nil {
 		return FormatPlain
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	linesChecked := 0

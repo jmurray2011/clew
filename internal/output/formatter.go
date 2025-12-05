@@ -84,24 +84,24 @@ func (f *Formatter) formatText(results []cloudwatch.LogResult) error {
 	for i, result := range results {
 		// Print context lines first (if any)
 		if len(result.Context) > 0 {
-			fmt.Fprintln(f.writer, ui.ContextStyle.Render(fmt.Sprintf("--- %d lines before ---", len(result.Context))))
+			_, _ = fmt.Fprintln(f.writer, ui.ContextStyle.Render(fmt.Sprintf("--- %d lines before ---", len(result.Context))))
 			for _, ctx := range result.Context {
-				fmt.Fprintln(f.writer, ui.ContextStyle.Render(fmt.Sprintf("  %s  %s",
+				_, _ = fmt.Fprintln(f.writer, ui.ContextStyle.Render(fmt.Sprintf("  %s  %s",
 					ctx.Timestamp.Format("15:04:05"),
 					truncateMessage(ctx.Message, 200))))
 			}
-			fmt.Fprintln(f.writer, ui.ContextStyle.Render("--- match ---"))
+			_, _ = fmt.Fprintln(f.writer, ui.ContextStyle.Render("--- match ---"))
 		}
 
 		// Header line with index, timestamp and log stream
 		// Show [N] index for easy reference with `clew case keep N`
-		fmt.Fprint(f.writer, ui.MutedStyle.Render(fmt.Sprintf("[%d] ", i+1)))
+		_, _ = fmt.Fprint(f.writer, ui.MutedStyle.Render(fmt.Sprintf("[%d] ", i+1)))
 		if len(result.Context) > 0 {
-			fmt.Fprint(f.writer, ui.MatchMarkerStyle.Render(">> "))
+			_, _ = fmt.Fprint(f.writer, ui.MatchMarkerStyle.Render(">> "))
 		}
-		fmt.Fprint(f.writer, ui.TimestampStyle.Render(result.Timestamp))
-		fmt.Fprint(f.writer, " | ")
-		fmt.Fprint(f.writer, ui.LogStreamStyle.Render(result.LogStream))
+		_, _ = fmt.Fprint(f.writer, ui.TimestampStyle.Render(result.Timestamp))
+		_, _ = fmt.Fprint(f.writer, " | ")
+		_, _ = fmt.Fprint(f.writer, ui.LogStreamStyle.Render(result.LogStream))
 
 		// Show shortened @ptr suffix (unique chars are at the end)
 		if ptr, ok := result.Fields["@ptr"]; ok && ptr != "" {
@@ -109,9 +109,9 @@ func (f *Formatter) formatText(results []cloudwatch.LogResult) error {
 			if len(suffix) > 12 {
 				suffix = suffix[len(suffix)-12:]
 			}
-			fmt.Fprint(f.writer, ui.MutedStyle.Render(fmt.Sprintf("  @%s", suffix)))
+			_, _ = fmt.Fprint(f.writer, ui.MutedStyle.Render(fmt.Sprintf("  @%s", suffix)))
 		}
-		fmt.Fprintln(f.writer)
+		_, _ = fmt.Fprintln(f.writer)
 
 		// Message with indentation for multi-line content
 		message := result.Message
@@ -123,12 +123,12 @@ func (f *Formatter) formatText(results []cloudwatch.LogResult) error {
 					return ui.HighlightStyle.Render(match)
 				})
 			}
-			fmt.Fprintf(f.writer, "  %s\n", line)
+			_, _ = fmt.Fprintf(f.writer, "  %s\n", line)
 		}
 
 		// Add separator between entries (except for last one)
 		if i < len(results)-1 {
-			fmt.Fprintln(f.writer)
+			_, _ = fmt.Fprintln(f.writer)
 		}
 	}
 
@@ -299,31 +299,31 @@ func (f *Formatter) FormatStreams(streams []cloudwatch.StreamInfo) error {
 // formatStreamsText outputs streams in human-readable text format.
 func (f *Formatter) formatStreamsText(streams []cloudwatch.StreamInfo) error {
 	if len(streams) == 0 {
-		fmt.Fprintln(f.writer, ui.MutedStyle.Render("No streams found."))
+		_, _ = fmt.Fprintln(f.writer, ui.MutedStyle.Render("No streams found."))
 		return nil
 	}
 
 	for _, s := range streams {
-		fmt.Fprintln(f.writer, ui.SuccessStyle.Render(s.Name))
+		_, _ = fmt.Fprintln(f.writer, ui.SuccessStyle.Render(s.Name))
 
-		fmt.Fprint(f.writer, ui.MutedStyle.Render("  Last Event: "))
+		_, _ = fmt.Fprint(f.writer, ui.MutedStyle.Render("  Last Event: "))
 		if !s.LastEventTime.IsZero() {
-			fmt.Fprintln(f.writer, s.LastEventTime.Format("2006-01-02T15:04:05Z"))
+			_, _ = fmt.Fprintln(f.writer, s.LastEventTime.Format("2006-01-02T15:04:05Z"))
 		} else {
-			fmt.Fprintln(f.writer, "N/A")
+			_, _ = fmt.Fprintln(f.writer, "N/A")
 		}
 
-		fmt.Fprint(f.writer, ui.MutedStyle.Render("  First Event: "))
+		_, _ = fmt.Fprint(f.writer, ui.MutedStyle.Render("  First Event: "))
 		if !s.FirstEventTime.IsZero() {
-			fmt.Fprintln(f.writer, s.FirstEventTime.Format("2006-01-02T15:04:05Z"))
+			_, _ = fmt.Fprintln(f.writer, s.FirstEventTime.Format("2006-01-02T15:04:05Z"))
 		} else {
-			fmt.Fprintln(f.writer, "N/A")
+			_, _ = fmt.Fprintln(f.writer, "N/A")
 		}
 
-		fmt.Fprint(f.writer, ui.MutedStyle.Render("  Stored Bytes: "))
-		fmt.Fprintln(f.writer, formatBytes(s.StoredBytes))
+		_, _ = fmt.Fprint(f.writer, ui.MutedStyle.Render("  Stored Bytes: "))
+		_, _ = fmt.Fprintln(f.writer, formatBytes(s.StoredBytes))
 
-		fmt.Fprintln(f.writer)
+		_, _ = fmt.Fprintln(f.writer)
 	}
 
 	return nil
@@ -414,27 +414,27 @@ func (f *Formatter) FormatLogGroups(groups []cloudwatch.LogGroupInfo) error {
 // formatGroupsText outputs log groups in human-readable text format.
 func (f *Formatter) formatGroupsText(groups []cloudwatch.LogGroupInfo) error {
 	if len(groups) == 0 {
-		fmt.Fprintln(f.writer, ui.MutedStyle.Render("No log groups found."))
+		_, _ = fmt.Fprintln(f.writer, ui.MutedStyle.Render("No log groups found."))
 		return nil
 	}
 
 	for _, g := range groups {
-		fmt.Fprintln(f.writer, ui.SuccessStyle.Render(g.Name))
+		_, _ = fmt.Fprintln(f.writer, ui.SuccessStyle.Render(g.Name))
 
-		fmt.Fprint(f.writer, ui.MutedStyle.Render("  Size: "))
-		fmt.Fprint(f.writer, formatBytes(g.StoredBytes))
+		_, _ = fmt.Fprint(f.writer, ui.MutedStyle.Render("  Size: "))
+		_, _ = fmt.Fprint(f.writer, formatBytes(g.StoredBytes))
 
 		if g.RetentionDays > 0 {
-			fmt.Fprintf(f.writer, "  |  Retention: %d days", g.RetentionDays)
+			_, _ = fmt.Fprintf(f.writer, "  |  Retention: %d days", g.RetentionDays)
 		} else {
-			fmt.Fprint(f.writer, "  |  Retention: Never expire")
+			_, _ = fmt.Fprint(f.writer, "  |  Retention: Never expire")
 		}
 
 		if !g.CreationTime.IsZero() {
-			fmt.Fprintf(f.writer, "  |  Created: %s", g.CreationTime.Format("2006-01-02"))
+			_, _ = fmt.Fprintf(f.writer, "  |  Created: %s", g.CreationTime.Format("2006-01-02"))
 		}
 
-		fmt.Fprintln(f.writer)
+		_, _ = fmt.Fprintln(f.writer)
 	}
 
 	return nil
@@ -505,7 +505,7 @@ func (f *Formatter) FormatMetricResult(result *cloudwatch.MetricResult) error {
 // formatMetricResultText outputs metric results in human-readable text format.
 func (f *Formatter) formatMetricResultText(result *cloudwatch.MetricResult) error {
 	// Header
-	fmt.Fprintf(f.writer, "%s/%s (%s)\n",
+	_, _ = fmt.Fprintf(f.writer, "%s/%s (%s)\n",
 		ui.LabelStyle.Render(result.Namespace),
 		ui.SuccessStyle.Render(result.MetricName),
 		result.Statistic)
@@ -515,9 +515,9 @@ func (f *Formatter) formatMetricResultText(result *cloudwatch.MetricResult) erro
 		for k, v := range result.Dimensions {
 			dims = append(dims, fmt.Sprintf("%s=%s", k, v))
 		}
-		fmt.Fprintf(f.writer, "Dimensions: %s\n", strings.Join(dims, ", "))
+		_, _ = fmt.Fprintf(f.writer, "Dimensions: %s\n", strings.Join(dims, ", "))
 	}
-	fmt.Fprintln(f.writer)
+	_, _ = fmt.Fprintln(f.writer)
 
 	// Find max value for scaling the bar chart
 	maxVal := 0.0
@@ -560,7 +560,7 @@ func (f *Formatter) formatMetricResultText(result *cloudwatch.MetricResult) erro
 			bar = ui.SuccessStyle.Render(bar)
 		}
 
-		fmt.Fprintf(f.writer, "%s  %s  %s\n", ts, valStr, bar)
+		_, _ = fmt.Fprintf(f.writer, "%s  %s  %s\n", ts, valStr, bar)
 	}
 
 	return nil
@@ -642,10 +642,10 @@ func (f *Formatter) FormatMetricsList(metrics []cloudwatch.MetricInfo) error {
 // formatMetricsListText outputs metrics list in human-readable format.
 func (f *Formatter) formatMetricsListText(metrics []cloudwatch.MetricInfo) error {
 	for _, m := range metrics {
-		fmt.Fprintln(f.writer, ui.SuccessStyle.Render(m.MetricName))
+		_, _ = fmt.Fprintln(f.writer, ui.SuccessStyle.Render(m.MetricName))
 		if len(m.Dimensions) > 0 {
 			for k, v := range m.Dimensions {
-				fmt.Fprintf(f.writer, "  %s: %s\n", ui.MutedStyle.Render(k), v)
+				_, _ = fmt.Fprintf(f.writer, "  %s: %s\n", ui.MutedStyle.Render(k), v)
 			}
 		}
 	}

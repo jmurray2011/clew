@@ -141,7 +141,7 @@ func TestManager_LoadCase(t *testing.T) {
 
 func TestManager_LoadCaseNotFound(t *testing.T) {
 	m := newTestManager(t)
-	m.EnsureDirectories()
+	_ = m.EnsureDirectories()
 
 	_, err := m.LoadCase("nonexistent")
 	if err == nil {
@@ -171,7 +171,7 @@ func TestManager_DeleteCase(t *testing.T) {
 
 func TestManager_DeleteCaseNotFound(t *testing.T) {
 	m := newTestManager(t)
-	m.EnsureDirectories()
+	_ = m.EnsureDirectories()
 
 	err := m.DeleteCase("nonexistent")
 	if err == nil {
@@ -245,18 +245,18 @@ func TestManager_ListCasesEmpty(t *testing.T) {
 
 func TestManager_ListCasesSkipsInvalidFiles(t *testing.T) {
 	m := newTestManager(t)
-	m.EnsureDirectories()
+	_ = m.EnsureDirectories()
 
 	// Create a valid case
 	_, _ = m.CreateCase("Valid Case", "valid-case")
 
 	// Create an invalid YAML file
 	invalidPath := filepath.Join(m.casesDir, "invalid.yaml")
-	os.WriteFile(invalidPath, []byte("not: valid: yaml: {{{{"), 0644)
+	_ = os.WriteFile(invalidPath, []byte("not: valid: yaml: {{{{"), 0644)
 
 	// Create a non-YAML file (should be ignored)
 	txtPath := filepath.Join(m.casesDir, "readme.txt")
-	os.WriteFile(txtPath, []byte("This is not a case"), 0644)
+	_ = os.WriteFile(txtPath, []byte("This is not a case"), 0644)
 
 	cases, err := m.ListCases()
 	if err != nil {
@@ -471,10 +471,10 @@ func TestManager_GetCaseIDs(t *testing.T) {
 
 func TestManager_StateFileCorrupted(t *testing.T) {
 	m := newTestManager(t)
-	m.EnsureDirectories()
+	_ = m.EnsureDirectories()
 
 	// Write corrupted state file
-	os.WriteFile(m.stateFile, []byte("{{{{not yaml"), 0644)
+	_ = os.WriteFile(m.stateFile, []byte("{{{{not yaml"), 0644)
 
 	// LoadState should return error
 	_, err := m.LoadState()
@@ -493,7 +493,7 @@ func TestManager_DeleteCaseWithCorruptedState(t *testing.T) {
 	}
 
 	// Corrupt the state file
-	os.WriteFile(m.stateFile, []byte("{{{{not yaml"), 0644)
+	_ = os.WriteFile(m.stateFile, []byte("{{{{not yaml"), 0644)
 
 	// Delete should still work (logs warning but doesn't fail)
 	err = m.DeleteCase("test-case")

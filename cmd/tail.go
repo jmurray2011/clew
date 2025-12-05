@@ -61,7 +61,7 @@ func runTail(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open source: %w", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -896,7 +896,7 @@ func openEditor(initial string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	// Write initial content
 	if initial != "" {
@@ -904,7 +904,7 @@ func openEditor(initial string) (string, error) {
 			return "", fmt.Errorf("failed to write temp file: %w", err)
 		}
 	}
-	tmpfile.Close()
+	_ = tmpfile.Close()
 
 	// Open editor
 	cmd := exec.Command(editor, tmpfile.Name())
@@ -1385,12 +1385,12 @@ func generatePDFReport(c *cases.Case, full bool, outputPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	if _, err := tmpfile.WriteString(typstContent); err != nil {
 		return fmt.Errorf("failed to write typst file: %w", err)
 	}
-	tmpfile.Close()
+	_ = tmpfile.Close()
 
 	// Determine output path
 	if outputPath == "" {
@@ -1655,10 +1655,10 @@ func runCaseExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create zip file: %w", err)
 	}
-	defer zipFile.Close()
+	defer func() { _ = zipFile.Close() }()
 
 	zipWriter := zip.NewWriter(zipFile)
-	defer zipWriter.Close()
+	defer func() { _ = zipWriter.Close() }()
 
 	// 1. Add case.yaml
 	caseYAML, err := yaml.Marshal(c)
@@ -1719,16 +1719,16 @@ func runCaseExport(cmd *cobra.Command, args []string) error {
 		tmpfile, err := os.CreateTemp("", "clew-export-*.typ")
 		if err == nil {
 			tmpPath := tmpfile.Name()
-			tmpfile.WriteString(typstContent)
-			tmpfile.Close()
-			defer os.Remove(tmpPath)
+			_, _ = tmpfile.WriteString(typstContent)
+			_ = tmpfile.Close()
+			defer func() { _ = os.Remove(tmpPath) }()
 
 			// Create temp file for PDF output
 			pdfTmp, err := os.CreateTemp("", "clew-export-*.pdf")
 			if err == nil {
 				pdfPath := pdfTmp.Name()
-				pdfTmp.Close()
-				defer os.Remove(pdfPath)
+				_ = pdfTmp.Close()
+				defer func() { _ = os.Remove(pdfPath) }()
 
 				// Run typst compile
 				typstCmd := exec.Command("typst", "compile", tmpPath, pdfPath)
@@ -1736,7 +1736,7 @@ func runCaseExport(cmd *cobra.Command, args []string) error {
 					// Read and add PDF to zip
 					pdfBytes, err := os.ReadFile(pdfPath)
 					if err == nil {
-						addFileToZip(zipWriter, "report.pdf", pdfBytes)
+						_ = addFileToZip(zipWriter, "report.pdf", pdfBytes)
 					}
 				}
 			}

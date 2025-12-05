@@ -41,24 +41,24 @@ func (f *Formatter) formatEntriesText(entries []source.Entry) error {
 	for i, entry := range entries {
 		// Print context lines first (if any)
 		if len(entry.Context.Before) > 0 {
-			fmt.Fprintln(f.writer, ui.ContextStyle.Render(fmt.Sprintf("--- %d lines before ---", len(entry.Context.Before))))
+			_, _ = fmt.Fprintln(f.writer, ui.ContextStyle.Render(fmt.Sprintf("--- %d lines before ---", len(entry.Context.Before))))
 			for _, ctx := range entry.Context.Before {
-				fmt.Fprintln(f.writer, ui.ContextStyle.Render(fmt.Sprintf("  %s  %s",
+				_, _ = fmt.Fprintln(f.writer, ui.ContextStyle.Render(fmt.Sprintf("  %s  %s",
 					ctx.Timestamp.Format("15:04:05"),
 					truncateMessage(ctx.Message, 200))))
 			}
-			fmt.Fprintln(f.writer, ui.ContextStyle.Render("--- match ---"))
+			_, _ = fmt.Fprintln(f.writer, ui.ContextStyle.Render("--- match ---"))
 		}
 
 		// Header line with index, timestamp and stream
 		// Show [N] index for easy reference with `clew case keep N`
-		fmt.Fprint(f.writer, ui.MutedStyle.Render(fmt.Sprintf("[%d] ", i+1)))
+		_, _ = fmt.Fprint(f.writer, ui.MutedStyle.Render(fmt.Sprintf("[%d] ", i+1)))
 		if len(entry.Context.Before) > 0 {
-			fmt.Fprint(f.writer, ui.MatchMarkerStyle.Render(">> "))
+			_, _ = fmt.Fprint(f.writer, ui.MatchMarkerStyle.Render(">> "))
 		}
-		fmt.Fprint(f.writer, ui.TimestampStyle.Render(entry.Timestamp.Format("2006-01-02 15:04:05.000")))
-		fmt.Fprint(f.writer, " | ")
-		fmt.Fprint(f.writer, ui.LogStreamStyle.Render(entry.Stream))
+		_, _ = fmt.Fprint(f.writer, ui.TimestampStyle.Render(entry.Timestamp.Format("2006-01-02 15:04:05.000")))
+		_, _ = fmt.Fprint(f.writer, " | ")
+		_, _ = fmt.Fprint(f.writer, ui.LogStreamStyle.Render(entry.Stream))
 
 		// Show shortened pointer suffix (unique chars are at the end for CloudWatch)
 		if entry.Ptr != "" {
@@ -73,9 +73,9 @@ func (f *Formatter) formatEntriesText(entries []source.Entry) error {
 				// CloudWatch @ptr - show suffix
 				suffix = suffix[len(suffix)-12:]
 			}
-			fmt.Fprint(f.writer, ui.MutedStyle.Render(fmt.Sprintf("  @%s", suffix)))
+			_, _ = fmt.Fprint(f.writer, ui.MutedStyle.Render(fmt.Sprintf("  @%s", suffix)))
 		}
-		fmt.Fprintln(f.writer)
+		_, _ = fmt.Fprintln(f.writer)
 
 		// Message with indentation for multi-line content
 		message := entry.Message
@@ -87,14 +87,14 @@ func (f *Formatter) formatEntriesText(entries []source.Entry) error {
 					return ui.HighlightStyle.Render(match)
 				})
 			}
-			fmt.Fprintf(f.writer, "  %s\n", line)
+			_, _ = fmt.Fprintf(f.writer, "  %s\n", line)
 		}
 
 		// Print after context lines (if any)
 		if len(entry.Context.After) > 0 {
-			fmt.Fprintln(f.writer, ui.ContextStyle.Render(fmt.Sprintf("--- %d lines after ---", len(entry.Context.After))))
+			_, _ = fmt.Fprintln(f.writer, ui.ContextStyle.Render(fmt.Sprintf("--- %d lines after ---", len(entry.Context.After))))
 			for _, ctx := range entry.Context.After {
-				fmt.Fprintln(f.writer, ui.ContextStyle.Render(fmt.Sprintf("  %s  %s",
+				_, _ = fmt.Fprintln(f.writer, ui.ContextStyle.Render(fmt.Sprintf("  %s  %s",
 					ctx.Timestamp.Format("15:04:05"),
 					truncateMessage(ctx.Message, 200))))
 			}
@@ -102,7 +102,7 @@ func (f *Formatter) formatEntriesText(entries []source.Entry) error {
 
 		// Add separator between entries (except for last one)
 		if i < len(entries)-1 {
-			fmt.Fprintln(f.writer)
+			_, _ = fmt.Fprintln(f.writer)
 		}
 	}
 
@@ -248,31 +248,31 @@ func (f *Formatter) FormatSourceStreams(streams []source.StreamInfo) error {
 // formatSourceStreamsText outputs streams in human-readable text format.
 func (f *Formatter) formatSourceStreamsText(streams []source.StreamInfo) error {
 	if len(streams) == 0 {
-		fmt.Fprintln(f.writer, ui.MutedStyle.Render("No streams found."))
+		_, _ = fmt.Fprintln(f.writer, ui.MutedStyle.Render("No streams found."))
 		return nil
 	}
 
 	for _, s := range streams {
-		fmt.Fprintln(f.writer, ui.SuccessStyle.Render(s.Name))
+		_, _ = fmt.Fprintln(f.writer, ui.SuccessStyle.Render(s.Name))
 
-		fmt.Fprint(f.writer, ui.MutedStyle.Render("  Last Event: "))
+		_, _ = fmt.Fprint(f.writer, ui.MutedStyle.Render("  Last Event: "))
 		if !s.LastTime.IsZero() {
-			fmt.Fprintln(f.writer, s.LastTime.Format("2006-01-02T15:04:05Z"))
+			_, _ = fmt.Fprintln(f.writer, s.LastTime.Format("2006-01-02T15:04:05Z"))
 		} else {
-			fmt.Fprintln(f.writer, "N/A")
+			_, _ = fmt.Fprintln(f.writer, "N/A")
 		}
 
-		fmt.Fprint(f.writer, ui.MutedStyle.Render("  First Event: "))
+		_, _ = fmt.Fprint(f.writer, ui.MutedStyle.Render("  First Event: "))
 		if !s.FirstTime.IsZero() {
-			fmt.Fprintln(f.writer, s.FirstTime.Format("2006-01-02T15:04:05Z"))
+			_, _ = fmt.Fprintln(f.writer, s.FirstTime.Format("2006-01-02T15:04:05Z"))
 		} else {
-			fmt.Fprintln(f.writer, "N/A")
+			_, _ = fmt.Fprintln(f.writer, "N/A")
 		}
 
-		fmt.Fprint(f.writer, ui.MutedStyle.Render("  Size: "))
-		fmt.Fprintln(f.writer, formatBytes(s.Size))
+		_, _ = fmt.Fprint(f.writer, ui.MutedStyle.Render("  Size: "))
+		_, _ = fmt.Fprintln(f.writer, formatBytes(s.Size))
 
-		fmt.Fprintln(f.writer)
+		_, _ = fmt.Fprintln(f.writer)
 	}
 
 	return nil

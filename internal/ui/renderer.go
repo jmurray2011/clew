@@ -92,37 +92,37 @@ func (r *Renderer) Status(format string, args ...any) {
 		return
 	}
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintln(r.err, r.render(StatusStyle, msg))
+	_, _ = fmt.Fprintln(r.err, r.render(StatusStyle, msg))
 }
 
 // Info prints an informational message.
 func (r *Renderer) Info(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintln(r.out, msg)
+	_, _ = fmt.Fprintln(r.out, msg)
 }
 
 // Success prints a success message.
 func (r *Renderer) Success(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintln(r.out, r.render(SuccessStyle, msg))
+	_, _ = fmt.Fprintln(r.out, r.render(SuccessStyle, msg))
 }
 
 // Warning prints a warning message.
 func (r *Renderer) Warning(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintln(r.err, r.render(WarningStyle, "Warning: "+msg))
+	_, _ = fmt.Fprintln(r.err, r.render(WarningStyle, "Warning: "+msg))
 }
 
 // Error prints an error message.
 func (r *Renderer) Error(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintln(r.err, r.render(ErrorStyle, "Error: "+msg))
+	_, _ = fmt.Fprintln(r.err, r.render(ErrorStyle, "Error: "+msg))
 }
 
 // Debug prints a debug message (only when verbose).
 func (r *Renderer) Debug(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintln(r.err, r.render(MutedStyle, "[DEBUG] "+msg))
+	_, _ = fmt.Fprintln(r.err, r.render(MutedStyle, "[DEBUG] "+msg))
 }
 
 // --- Formatted Output ---
@@ -130,30 +130,30 @@ func (r *Renderer) Debug(format string, args ...any) {
 // KeyValue prints a key-value pair.
 func (r *Renderer) KeyValue(key, value string) {
 	label := r.render(LabelStyle, key+":")
-	fmt.Fprintf(r.out, "%s %s\n", label, value)
+	_, _ = fmt.Fprintf(r.out, "%s %s\n", label, value)
 }
 
 // KeyValueIndent prints an indented key-value pair.
 func (r *Renderer) KeyValueIndent(key, value string, indent int) {
 	prefix := strings.Repeat("  ", indent)
 	label := r.render(LabelStyle, key+":")
-	fmt.Fprintf(r.out, "%s%s %s\n", prefix, label, value)
+	_, _ = fmt.Fprintf(r.out, "%s%s %s\n", prefix, label, value)
 }
 
 // Section prints a section title.
 func (r *Renderer) Section(title string) {
-	fmt.Fprintln(r.out)
-	fmt.Fprintln(r.out, r.render(SectionTitleStyle, title))
+	_, _ = fmt.Fprintln(r.out)
+	_, _ = fmt.Fprintln(r.out, r.render(SectionTitleStyle, title))
 }
 
 // Divider prints a horizontal divider.
 func (r *Renderer) Divider() {
-	fmt.Fprintln(r.out, r.render(MutedStyle, strings.Repeat("─", 40)))
+	_, _ = fmt.Fprintln(r.out, r.render(MutedStyle, strings.Repeat("─", 40)))
 }
 
 // Newline prints a blank line.
 func (r *Renderer) Newline() {
-	fmt.Fprintln(r.out)
+	_, _ = fmt.Fprintln(r.out)
 }
 
 // --- Log Entry Rendering ---
@@ -163,7 +163,7 @@ func (r *Renderer) LogEntry(timestamp, logStream, message string) {
 	ts := r.render(TimestampStyle, timestamp)
 	stream := r.render(LogStreamStyle, logStream)
 
-	fmt.Fprintf(r.out, "%s | %s\n", ts, stream)
+	_, _ = fmt.Fprintf(r.out, "%s | %s\n", ts, stream)
 
 	// Apply highlighting if set
 	displayMsg := message
@@ -176,22 +176,22 @@ func (r *Renderer) LogEntry(timestamp, logStream, message string) {
 	// Indent message lines
 	lines := strings.Split(displayMsg, "\n")
 	for _, line := range lines {
-		fmt.Fprintf(r.out, "  %s\n", line)
+		_, _ = fmt.Fprintf(r.out, "  %s\n", line)
 	}
 }
 
 // LogEntryWithContext renders a log entry with context lines before it.
 func (r *Renderer) LogEntryWithContext(timestamp, logStream, message string, context []string) {
 	if len(context) > 0 {
-		fmt.Fprintln(r.out, r.render(ContextStyle, fmt.Sprintf("--- %d lines before ---", len(context))))
+		_, _ = fmt.Fprintln(r.out, r.render(ContextStyle, fmt.Sprintf("--- %d lines before ---", len(context))))
 		for _, ctx := range context {
-			fmt.Fprintln(r.out, r.render(ContextStyle, "  "+ctx))
+			_, _ = fmt.Fprintln(r.out, r.render(ContextStyle, "  "+ctx))
 		}
-		fmt.Fprintln(r.out, r.render(ContextStyle, "--- match ---"))
+		_, _ = fmt.Fprintln(r.out, r.render(ContextStyle, "--- match ---"))
 	}
 
 	// Print match marker
-	fmt.Fprint(r.out, r.render(MatchMarkerStyle, ">> "))
+	_, _ = fmt.Fprint(r.out, r.render(MatchMarkerStyle, ">> "))
 	r.LogEntry(timestamp, logStream, message)
 }
 
@@ -221,14 +221,14 @@ func (r *Renderer) Table(headers []string, rows [][]string) {
 	for i, h := range headers {
 		headerParts[i] = r.render(LabelStyle, fmt.Sprintf("%-*s", widths[i], h))
 	}
-	fmt.Fprintln(r.out, strings.Join(headerParts, "  "))
+	_, _ = fmt.Fprintln(r.out, strings.Join(headerParts, "  "))
 
 	// Print separator
 	sepParts := make([]string, len(headers))
 	for i, w := range widths {
 		sepParts[i] = strings.Repeat("-", w)
 	}
-	fmt.Fprintln(r.out, r.render(MutedStyle, strings.Join(sepParts, "  ")))
+	_, _ = fmt.Fprintln(r.out, r.render(MutedStyle, strings.Join(sepParts, "  ")))
 
 	// Print rows
 	for _, row := range rows {
@@ -240,7 +240,7 @@ func (r *Renderer) Table(headers []string, rows [][]string) {
 			}
 			rowParts[i] = fmt.Sprintf("%-*s", widths[i], cell)
 		}
-		fmt.Fprintln(r.out, strings.Join(rowParts, "  "))
+		_, _ = fmt.Fprintln(r.out, strings.Join(rowParts, "  "))
 	}
 }
 
@@ -267,7 +267,7 @@ func (r *Renderer) RenderCostEstimate(est CostEstimate) {
 	r.Newline()
 
 	for _, lg := range est.LogGroups {
-		fmt.Fprintln(r.out, r.render(LabelStyle, "  "+lg.Name))
+		_, _ = fmt.Fprintln(r.out, r.render(LabelStyle, "  "+lg.Name))
 		r.KeyValueIndent("Total size", lg.TotalSize, 2)
 		r.KeyValueIndent("Estimated scan", lg.EstimatedScan, 2)
 	}
@@ -289,5 +289,5 @@ func (r *Renderer) RenderCostEstimate(est CostEstimate) {
 
 // NoResults prints a "no results" message.
 func (r *Renderer) NoResults() {
-	fmt.Fprintln(r.out, r.render(MutedStyle, "No results found."))
+	_, _ = fmt.Fprintln(r.out, r.render(MutedStyle, "No results found."))
 }
