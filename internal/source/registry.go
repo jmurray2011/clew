@@ -3,6 +3,8 @@ package source
 import (
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -26,13 +28,20 @@ func Register(scheme string, opener SourceOpener) {
 //   - @alias (resolved from config)
 func Open(uri string) (Source, error) {
 	// Handle bare paths as file://
-	if strings.HasPrefix(uri, "/") || strings.HasPrefix(uri, "./") || strings.HasPrefix(uri, "../") {
-		uri = "file://" + uri
+	if strings.HasPrefix(uri, "/") || strings.HasPrefix(uri, "./") || strings.HasPrefix(uri, "../") || strings.HasPrefix(uri, "~") {
+		// Resolve to absolute path to avoid url.Parse misinterpreting relative paths
+		path := expandPath(uri)
+		uri = "file://" + path
 	}
 
 	// Handle @alias references
 	if strings.HasPrefix(uri, "@") {
 		return OpenAlias(uri[1:])
+	}
+
+	// Detect common URI mistakes
+	if err := validateURISyntax(uri); err != nil {
+		return nil, err
 	}
 
 	parsed, err := url.Parse(uri)
@@ -46,6 +55,30 @@ func Open(uri string) (Source, error) {
 	}
 
 	return opener(parsed)
+}
+
+// validateURISyntax checks for common URI mistakes and returns helpful errors.
+func validateURISyntax(uri string) error {
+	// Check for @ used instead of ? for query parameters
+	// Pattern: scheme:///path@key=value (should be scheme:///path?key=value)
+	if idx := strings.Index(uri, "://"); idx > 0 {
+		rest := uri[idx+3:]
+		// Look for @key=value pattern (not at the start, which would be user@host)
+		if atIdx := strings.Index(rest, "@"); atIdx > 0 {
+			afterAt := rest[atIdx+1:]
+			// Check if it looks like a query parameter (contains =)
+			if strings.Contains(afterAt, "=") && !strings.Contains(rest[:atIdx], "?") {
+				return fmt.Errorf("invalid URI %q: use '?' for query parameters, not '@' (e.g., cloudwatch:///log-group?profile=x)", uri)
+			}
+		}
+	}
+
+	// Check for missing scheme (common: forgetting cloudwatch://)
+	if strings.HasPrefix(uri, "///") {
+		return fmt.Errorf("invalid URI %q: missing scheme (e.g., cloudwatch:///log-group)", uri)
+	}
+
+	return nil
 }
 
 // OpenAlias resolves a config alias to a Source.
@@ -121,4 +154,27 @@ func availableSchemes() string {
 		return "(none registered)"
 	}
 	return strings.Join(schemes, ", ")
+}
+
+// expandPath resolves ~ to home directory and converts relative paths to absolute.
+func expandPath(path string) string {
+	// Expand ~ to home directory
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	} else if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = home
+		}
+	}
+
+	// Convert relative paths to absolute
+	if !filepath.IsAbs(path) {
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+	}
+
+	return path
 }

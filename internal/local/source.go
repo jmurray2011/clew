@@ -39,6 +39,13 @@ func openSource(u *url.URL) (source.Source, error) {
 		return nil, fmt.Errorf("file:// URI requires a path")
 	}
 
+	// Expand ~ to home directory
+	if strings.HasPrefix(pattern, "/~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			pattern = filepath.Join(home, pattern[3:])
+		}
+	}
+
 	formatHint := u.Query().Get("format")
 
 	return NewSource(pattern, formatHint)
