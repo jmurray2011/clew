@@ -492,7 +492,7 @@ func TestJavaParser_ShouldJoin(t *testing.T) {
 		{
 			name:     "empty line",
 			line:     "",
-			wantJoin: false,
+			wantJoin: true, // Blank lines preserved in multiline messages
 		},
 		{
 			name:     "stack frame with tab",
@@ -542,12 +542,12 @@ func TestJavaParser_ShouldJoin(t *testing.T) {
 		{
 			name:     "plain text",
 			line:     "Some regular message",
-			wantJoin: false,
+			wantJoin: true, // Non-timestamp lines are continuations
 		},
 		{
 			name:     "at without indent",
 			line:     "at the store I bought something",
-			wantJoin: false,
+			wantJoin: true, // Non-timestamp lines are continuations
 		},
 	}
 

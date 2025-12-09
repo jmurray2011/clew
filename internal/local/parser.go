@@ -290,12 +290,16 @@ type JavaParser struct{}
 
 // Common Java log patterns
 var javaPatterns = []*regexp.Regexp{
-	// Log4j/Logback: "2025-01-15 10:30:45,123 INFO [thread] class - message"
+	// Log4j/Logback with millis: "2025-01-15 10:30:45,123 INFO [thread] class - message"
 	regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s+(\w+)\s+\[([^\]]+)\]\s+(\S+)\s+-\s+(.*)$`),
-	// Log4j2: "2025-01-15 10:30:45.123 [thread] INFO class - message"
+	// Log4j2 with millis: "2025-01-15 10:30:45.123 [thread] INFO class - message"
 	regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s+\[([^\]]+)\]\s+(\w+)\s+(\S+)\s+-\s+(.*)$`),
-	// Simple: "2025-01-15 10:30:45,123 INFO message"
+	// Spring Boot/Logback without millis: "2025-01-15 10:30:45 [thread] INFO class - message"
+	regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+\[([^\]]+)\]\s+(\w+)\s+(\S+)\s+-\s+(.*)$`),
+	// Simple with millis: "2025-01-15 10:30:45,123 INFO message"
 	regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s+(\w+)\s+(.*)$`),
+	// Simple without millis: "2025-01-15 10:30:45 INFO message"
+	regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+(\w+)\s+(.*)$`),
 	// ISO with level: "2025-01-15T10:30:45.123Z INFO message"
 	regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z?)\s+(\w+)\s+(.*)$`),
 }
@@ -316,23 +320,33 @@ func (p *JavaParser) ParseLine(line string, lineNum int, filePath string) *sourc
 	for i, pattern := range javaPatterns {
 		if matches := pattern.FindStringSubmatch(line); matches != nil {
 			switch i {
-			case 0: // Log4j/Logback with thread and class
+			case 0: // Log4j/Logback with millis: level [thread] class - message
 				entry.Timestamp = parseJavaTimestamp(matches[1], matches[2])
 				entry.Fields["level"] = matches[3]
 				entry.Fields["thread"] = matches[4]
 				entry.Fields["logger"] = matches[5]
 				entry.Message = matches[6]
-			case 1: // Log4j2 format
+			case 1: // Log4j2 with millis: [thread] level class - message
 				entry.Timestamp = parseJavaTimestamp(matches[1], matches[2])
 				entry.Fields["thread"] = matches[3]
 				entry.Fields["level"] = matches[4]
 				entry.Fields["logger"] = matches[5]
 				entry.Message = matches[6]
-			case 2: // Simple format
+			case 2: // Spring Boot without millis: [thread] level class - message
+				entry.Timestamp = parseJavaTimestamp(matches[1], matches[2])
+				entry.Fields["thread"] = matches[3]
+				entry.Fields["level"] = matches[4]
+				entry.Fields["logger"] = matches[5]
+				entry.Message = matches[6]
+			case 3: // Simple with millis
 				entry.Timestamp = parseJavaTimestamp(matches[1], matches[2])
 				entry.Fields["level"] = matches[3]
 				entry.Message = matches[4]
-			case 3: // ISO format
+			case 4: // Simple without millis
+				entry.Timestamp = parseJavaTimestamp(matches[1], matches[2])
+				entry.Fields["level"] = matches[3]
+				entry.Message = matches[4]
+			case 5: // ISO format
 				if ts, err := time.Parse("2006-01-02T15:04:05.000Z", matches[1]); err == nil {
 					entry.Timestamp = ts
 				} else if ts, err := time.Parse("2006-01-02T15:04:05.000", matches[1]); err == nil {
@@ -355,7 +369,12 @@ func parseJavaTimestamp(datePart, timePart string) time.Time {
 	timePart = strings.Replace(timePart, ",", ".", 1)
 	combined := datePart + " " + timePart
 
+	// Try with milliseconds first
 	if ts, err := time.Parse("2006-01-02 15:04:05.000", combined); err == nil {
+		return ts
+	}
+	// Try without milliseconds
+	if ts, err := time.Parse("2006-01-02 15:04:05", combined); err == nil {
 		return ts
 	}
 	return time.Time{}
@@ -367,8 +386,9 @@ func (p *JavaParser) IsMultiline() bool { return true }
 var exceptionPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*\.[A-Z][A-Za-z0-9_]*(Exception|Error|Throwable)`)
 
 func (p *JavaParser) ShouldJoin(line string) bool {
+	// Blank lines within a multiline message should be preserved
 	if len(line) == 0 {
-		return false
+		return true
 	}
 
 	// Check for common stack trace patterns
@@ -401,5 +421,14 @@ func (p *JavaParser) ShouldJoin(line string) bool {
 		return true
 	}
 
-	return false
+	// If line doesn't start with a timestamp, it's likely a continuation
+	// Check if it matches any of our timestamp patterns
+	for _, pattern := range javaPatterns {
+		if pattern.MatchString(line) {
+			return false // This is a new log entry
+		}
+	}
+
+	// Doesn't look like a new log entry - join it
+	return true
 }

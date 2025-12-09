@@ -546,3 +546,65 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+func TestNewSourceFromFiles(t *testing.T) {
+	dir := t.TempDir()
+	file1 := createTempFile(t, dir, "a.log", "line from a\n")
+	file2 := createTempFile(t, dir, "b.log", "line from b\n")
+	file3 := createTempFile(t, dir, "c.log", "line from c\n")
+
+	t.Run("multiple files", func(t *testing.T) {
+		src, err := NewSourceFromFiles([]string{file1, file2, file3}, "")
+		if err != nil {
+			t.Fatalf("NewSourceFromFiles failed: %v", err)
+		}
+		if len(src.files) != 3 {
+			t.Errorf("expected 3 files, got %d", len(src.files))
+		}
+
+		// Query should return entries from all files
+		ctx := context.Background()
+		entries, err := src.Query(ctx, source.QueryParams{})
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+		if len(entries) != 3 {
+			t.Errorf("expected 3 entries, got %d", len(entries))
+		}
+	})
+
+	t.Run("empty file list", func(t *testing.T) {
+		_, err := NewSourceFromFiles([]string{}, "")
+		if err == nil {
+			t.Error("expected error for empty file list")
+		}
+	})
+
+	t.Run("nonexistent files filtered out", func(t *testing.T) {
+		src, err := NewSourceFromFiles([]string{file1, "/nonexistent/file.log", file2}, "")
+		if err != nil {
+			t.Fatalf("NewSourceFromFiles failed: %v", err)
+		}
+		if len(src.files) != 2 {
+			t.Errorf("expected 2 valid files, got %d", len(src.files))
+		}
+	})
+
+	t.Run("all nonexistent", func(t *testing.T) {
+		_, err := NewSourceFromFiles([]string{"/nonexistent/a.log", "/nonexistent/b.log"}, "")
+		if err == nil {
+			t.Error("expected error when all files nonexistent")
+		}
+	})
+
+	t.Run("uri shows count", func(t *testing.T) {
+		src, err := NewSourceFromFiles([]string{file1, file2, file3}, "")
+		if err != nil {
+			t.Fatalf("NewSourceFromFiles failed: %v", err)
+		}
+		meta := src.Metadata()
+		if !strings.Contains(meta.URI, "+2 more") {
+			t.Errorf("expected URI to show '+2 more', got %q", meta.URI)
+		}
+	})
+}

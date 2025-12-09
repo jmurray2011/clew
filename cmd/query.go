@@ -13,6 +13,7 @@ import (
 
 	"github.com/jmurray2011/clew/internal/cases"
 	"github.com/jmurray2011/clew/internal/cloudwatch"
+	"github.com/jmurray2011/clew/internal/local"
 	"github.com/jmurray2011/clew/internal/output"
 	"github.com/jmurray2011/clew/internal/source"
 	"github.com/jmurray2011/clew/internal/ui"
@@ -68,8 +69,11 @@ Examples:
   clew query @prod-api -s 2h -f "exception" -B 10
 
   # Export results
-  clew query @prod-api -s 1d -f "error" --export errors.json -o json`,
-	Args: cobra.ExactArgs(1),
+  clew query @prod-api -s 1d -f "error" --export errors.json -o json
+
+  # Multiple files (shell-expanded glob)
+  clew query ./*.log -s 1h -f "error"`,
+	Args: cobra.MinimumNArgs(1),
 	RunE: runQuery,
 }
 
@@ -97,7 +101,16 @@ func init() {
 }
 
 func runQuery(cmd *cobra.Command, args []string) error {
-	sourceURI := args[0]
+	var sourceURI string
+	var multiFiles []string // For shell-expanded globs
+
+	// Handle multiple arguments (shell-expanded glob)
+	if len(args) > 1 && looksLikeLocalFiles(args) {
+		multiFiles = args
+		sourceURI = args[0] // Use first file for display, actual files handled separately
+	} else {
+		sourceURI = args[0]
+	}
 
 	// Add format hint for local files if specified
 	if logFormat != "auto" && !strings.HasPrefix(sourceURI, "cloudwatch://") && !strings.HasPrefix(sourceURI, "@") {
@@ -128,9 +141,23 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	}
 
 	// Open the source
-	src, err := source.Open(sourceURI)
-	if err != nil {
-		return fmt.Errorf("failed to open source: %w", err)
+	var src source.Source
+	if len(multiFiles) > 0 {
+		// Shell-expanded glob - use explicit file list
+		formatHint := ""
+		if logFormat != "auto" {
+			formatHint = logFormat
+		}
+		src, err = local.NewSourceFromFiles(multiFiles, formatHint)
+		if err != nil {
+			return fmt.Errorf("failed to open files: %w", err)
+		}
+		sourceURI = src.Metadata().URI // Update for display
+	} else {
+		src, err = source.Open(sourceURI)
+		if err != nil {
+			return fmt.Errorf("failed to open source: %w", err)
+		}
 	}
 	defer func() { _ = src.Close() }()
 
@@ -478,4 +505,20 @@ func buildConsoleURL(region string, logGroups []string, start, end time.Time, qu
 		region,
 		queryDetail,
 	)
+}
+
+// looksLikeLocalFiles checks if all arguments appear to be local file paths
+// (not URIs like cloudwatch:// or aliases like @prod).
+func looksLikeLocalFiles(args []string) bool {
+	for _, arg := range args {
+		// Skip if it looks like a URI scheme
+		if strings.Contains(arg, "://") {
+			return false
+		}
+		// Skip if it looks like an alias
+		if strings.HasPrefix(arg, "@") {
+			return false
+		}
+	}
+	return true
 }

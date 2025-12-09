@@ -87,6 +87,49 @@ func NewSource(pattern, formatHint string) (*Source, error) {
 	}, nil
 }
 
+// NewSourceFromFiles creates a local file source from explicit file paths.
+// This is used when the shell expands a glob before clew receives it.
+func NewSourceFromFiles(files []string, formatHint string) (*Source, error) {
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no files provided")
+	}
+
+	// Verify files exist
+	var validFiles []string
+	for _, f := range files {
+		if _, err := os.Stat(f); err == nil {
+			validFiles = append(validFiles, f)
+		}
+	}
+
+	if len(validFiles) == 0 {
+		return nil, fmt.Errorf("none of the specified files exist")
+	}
+
+	// Sort files for consistent ordering
+	sort.Strings(validFiles)
+
+	// Determine format
+	format := parseFormat(formatHint)
+	if format == FormatAuto && len(validFiles) > 0 {
+		format = DetectFormat(validFiles[0])
+	}
+
+	// Use first file as the URI for display
+	uri := validFiles[0]
+	if len(validFiles) > 1 {
+		uri = fmt.Sprintf("%s (+%d more)", validFiles[0], len(validFiles)-1)
+	}
+
+	return &Source{
+		pattern: uri,
+		files:   validFiles,
+		format:  format,
+		parser:  NewParser(format),
+		uri:     uri,
+	}, nil
+}
+
 // Query returns log entries matching the given parameters.
 func (s *Source) Query(ctx context.Context, params source.QueryParams) ([]source.Entry, error) {
 	var results []source.Entry
