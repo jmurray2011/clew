@@ -4,129 +4,80 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jmurray2011/clew/pkg/timeutil"
+	"github.com/spf13/cobra"
 )
 
-func TestParseTimeArg(t *testing.T) {
+// Note: Tests for time parsing, byte formatting, and duration formatting
+// have been moved to pkg/timeutil/parse_test.go. These tests verify the
+// integration with cmd package.
+
+func TestTimeutilParseIntegration(t *testing.T) {
+	// Verify that timeutil.Parse works as expected for cmd package usage
 	tests := []struct {
 		name    string
 		input   string
-		check   func(t time.Time) bool
 		wantErr bool
 	}{
-		{
-			name:  "empty string returns now",
-			input: "",
-			check: func(t time.Time) bool {
-				return time.Since(t) < time.Second
-			},
-		},
-		{
-			name:  "now keyword",
-			input: "now",
-			check: func(t time.Time) bool {
-				return time.Since(t) < time.Second
-			},
-		},
-		{
-			name:  "RFC3339",
-			input: "2025-12-03T10:00:00Z",
-			check: func(t time.Time) bool {
-				return t.Year() == 2025 && t.Month() == 12 && t.Day() == 3 && t.Hour() == 10
-			},
-		},
-		{
-			name:  "relative minutes",
-			input: "30m",
-			check: func(t time.Time) bool {
-				diff := time.Since(t)
-				return diff >= 29*time.Minute && diff <= 31*time.Minute
-			},
-		},
-		{
-			name:  "relative hours",
-			input: "2h",
-			check: func(t time.Time) bool {
-				diff := time.Since(t)
-				return diff >= 119*time.Minute && diff <= 121*time.Minute
-			},
-		},
-		{
-			name:  "relative days",
-			input: "7d",
-			check: func(t time.Time) bool {
-				diff := time.Since(t)
-				return diff >= 167*time.Hour && diff <= 169*time.Hour
-			},
-		},
-		{
-			name:    "invalid format",
-			input:   "invalid",
-			wantErr: true,
-		},
-		{
-			name:    "unsupported unit",
-			input:   "5s",
-			wantErr: true,
-		},
+		{"empty string", "", false},
+		{"now keyword", "now", false},
+		{"RFC3339", "2025-12-03T10:00:00Z", false},
+		{"relative minutes", "30m", false},
+		{"relative hours", "2h", false},
+		{"relative days", "7d", false},
+		{"invalid format", "invalid", true},
+		{"unsupported unit", "5s", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseTimeArg(tt.input)
+			_, err := timeutil.Parse(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("parseTimeArg(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
-				return
-			}
-			if !tt.wantErr && tt.check != nil && !tt.check(got) {
-				t.Errorf("parseTimeArg(%q) = %v, check failed", tt.input, got)
+				t.Errorf("timeutil.Parse(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
 			}
 		})
 	}
 }
 
-func TestFormatBytesHuman(t *testing.T) {
+func TestTimeutilFormatBytesIntegration(t *testing.T) {
+	// Verify that timeutil.FormatBytes works as expected for cmd package usage
 	tests := []struct {
-		name  string
 		bytes int64
 		want  string
 	}{
-		{"zero", 0, "0 B"},
-		{"bytes", 500, "500 B"},
-		{"kilobytes", 1024, "1.0 KB"},
-		{"megabytes", 1024 * 1024, "1.0 MB"},
-		{"gigabytes", 1024 * 1024 * 1024, "1.0 GB"},
-		{"1.5 GB", 1024*1024*1024 + 512*1024*1024, "1.5 GB"},
-		{"large", 5 * 1024 * 1024 * 1024, "5.0 GB"},
+		{0, "0 B"},
+		{1024, "1.0 KB"},
+		{1024 * 1024, "1.0 MB"},
+		{1024 * 1024 * 1024, "1.0 GB"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := formatBytesHuman(tt.bytes)
+		t.Run(tt.want, func(t *testing.T) {
+			got := timeutil.FormatBytes(tt.bytes)
 			if got != tt.want {
-				t.Errorf("formatBytesHuman(%d) = %q, want %q", tt.bytes, got, tt.want)
+				t.Errorf("timeutil.FormatBytes(%d) = %q, want %q", tt.bytes, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestFormatDuration(t *testing.T) {
+func TestTimeutilFormatDurationIntegration(t *testing.T) {
+	// Verify that timeutil.FormatDuration works as expected for cmd package usage
 	tests := []struct {
-		name string
 		d    time.Duration
 		want string
 	}{
-		{"30 minutes", 30 * time.Minute, "30m"},
-		{"1 hour", time.Hour, "1.0h"},
-		{"2.5 hours", 150 * time.Minute, "2.5h"},
-		{"1 day", 24 * time.Hour, "1.0d"},
-		{"7 days", 7 * 24 * time.Hour, "7.0d"},
+		{30 * time.Minute, "30m"},
+		{time.Hour, "1.0h"},
+		{24 * time.Hour, "1.0d"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := formatDuration(tt.d)
+		t.Run(tt.want, func(t *testing.T) {
+			got := timeutil.FormatDuration(tt.d)
 			if got != tt.want {
-				t.Errorf("formatDuration(%v) = %q, want %q", tt.d, got, tt.want)
+				t.Errorf("timeutil.FormatDuration(%v) = %q, want %q", tt.d, got, tt.want)
 			}
 		})
 	}
@@ -461,5 +412,91 @@ func TestFormatLogGroups(t *testing.T) {
 				t.Errorf("formatLogGroups(%v) = %q, want %q", tt.groups, got, tt.want)
 			}
 		})
+	}
+}
+
+// Tests for App struct - demonstrating testability of the cmd package
+
+func TestNewAppWithConfig(t *testing.T) {
+	cfg := Config{
+		Profile:      "test-profile",
+		Region:       "us-west-2",
+		OutputFormat: "json",
+		Verbose:      true,
+	}
+
+	app := NewAppWithConfig(cfg, nil, nil)
+
+	if app.Config.Profile != "test-profile" {
+		t.Errorf("expected profile 'test-profile', got %q", app.Config.Profile)
+	}
+	if app.Config.Region != "us-west-2" {
+		t.Errorf("expected region 'us-west-2', got %q", app.Config.Region)
+	}
+	if app.Config.OutputFormat != "json" {
+		t.Errorf("expected output format 'json', got %q", app.Config.OutputFormat)
+	}
+	if !app.Config.Verbose {
+		t.Error("expected verbose to be true")
+	}
+}
+
+func TestAppGetters(t *testing.T) {
+	cfg := Config{
+		Profile:      "my-profile",
+		Region:       "eu-west-1",
+		OutputFormat: "csv",
+	}
+
+	app := NewAppWithConfig(cfg, nil, nil)
+
+	// Test getter methods
+	if got := app.GetProfile(); got != "my-profile" {
+		t.Errorf("GetProfile() = %q, want 'my-profile'", got)
+	}
+	if got := app.GetRegion(); got != "eu-west-1" {
+		t.Errorf("GetRegion() = %q, want 'eu-west-1'", got)
+	}
+	if got := app.GetOutputFormat(); got != "csv" {
+		t.Errorf("GetOutputFormat() = %q, want 'csv'", got)
+	}
+}
+
+func TestAppAccountIDCache(t *testing.T) {
+	app := NewAppWithConfig(Config{}, nil, nil)
+
+	// Initially empty
+	if len(app.AccountIDCache) != 0 {
+		t.Error("expected empty account ID cache")
+	}
+
+	// Can store and retrieve
+	app.AccountIDCache["test-profile"] = "123456789012"
+	if got := app.AccountIDCache["test-profile"]; got != "123456789012" {
+		t.Errorf("expected account ID '123456789012', got %q", got)
+	}
+}
+
+func TestSetAndGetApp(t *testing.T) {
+	cfg := Config{
+		Profile: "context-test",
+		Verbose: true,
+	}
+	app := NewAppWithConfig(cfg, nil, nil)
+
+	// Create a context with the app
+	ctx := SetApp(t.Context(), app)
+
+	// Create a mock command with the context
+	cmd := &cobra.Command{}
+	cmd.SetContext(ctx)
+
+	// Retrieve the app
+	retrieved := GetApp(cmd)
+	if retrieved.Config.Profile != "context-test" {
+		t.Errorf("expected profile 'context-test', got %q", retrieved.Config.Profile)
+	}
+	if !retrieved.Config.Verbose {
+		t.Error("expected verbose to be true")
 	}
 }

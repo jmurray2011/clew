@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"os"
 
 	"github.com/jmurray2011/clew/internal/output"
@@ -42,6 +41,7 @@ func init() {
 }
 
 func runStreams(cmd *cobra.Command, args []string) error {
+	app := GetApp(cmd)
 	sourceURI := args[0]
 
 	// Open the source
@@ -51,8 +51,8 @@ func runStreams(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = src.Close() }()
 
-	ctx := context.Background()
-	render.Status("Listing streams from %s...", sourceURI)
+	ctx := cmd.Context()
+	app.Render.Status("Listing streams from %s...", sourceURI)
 
 	streams, err := src.ListStreams(ctx)
 	if err != nil {
@@ -65,6 +65,6 @@ func runStreams(cmd *cobra.Command, args []string) error {
 	}
 
 	// Format output
-	formatter := output.NewFormatter(getOutputFormat(), os.Stdout)
+	formatter := output.NewFormatter(app.GetOutputFormat(), os.Stdout)
 	return formatter.FormatSourceStreams(streams)
 }

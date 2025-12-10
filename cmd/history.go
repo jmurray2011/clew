@@ -61,6 +61,7 @@ func init() {
 }
 
 func runHistory(cmd *cobra.Command, args []string) error {
+	app := GetApp(cmd)
 	historyFile, err := getHistoryFilePath()
 	if err != nil {
 		return err
@@ -70,7 +71,7 @@ func runHistory(cmd *cobra.Command, args []string) error {
 		if err := os.Remove(historyFile); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("failed to clear history: %w", err)
 		}
-		render.Success("History cleared")
+		app.Render.Success("History cleared")
 		return nil
 	}
 
@@ -80,7 +81,7 @@ func runHistory(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(entries) == 0 {
-		render.Info("No query history found.")
+		app.Render.Info("No query history found.")
 		return nil
 	}
 
@@ -90,8 +91,8 @@ func runHistory(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("query #%d not found (history has %d entries)", historyRun, len(entries))
 		}
 		entry := entries[historyRun-1]
-		render.Status("Re-running query from %s...", entry.Timestamp.Format("2006-01-02 15:04:05"))
-		render.Newline()
+		app.Render.Status("Re-running query from %s...", entry.Timestamp.Format("2006-01-02 15:04:05"))
+		app.Render.Newline()
 
 		// Build the source URI from history entry
 		var sourceURI string
@@ -151,8 +152,8 @@ func runHistory(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s %s  %s  %s  -s %s  %s\n", num, ts, source, queryInfo, entry.StartTime, resultInfo)
 	}
 
-	render.Newline()
-	render.Info("Use 'clew history --run N' to re-run a query")
+	app.Render.Newline()
+	app.Render.Info("Use 'clew history --run N' to re-run a query")
 	return nil
 }
 

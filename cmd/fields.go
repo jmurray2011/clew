@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -57,6 +56,7 @@ func init() {
 }
 
 func runFields(cmd *cobra.Command, args []string) error {
+	app := GetApp(cmd)
 	lg := fieldsLogGroup
 	if lg == "" {
 		lg = getDefaultLogGroup()
@@ -67,13 +67,13 @@ func runFields(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--log-group is required")
 	}
 
-	rawClient, err := cloudwatch.NewLogsClient(getProfile(), getRegion())
+	rawClient, err := cloudwatch.NewLogsClient(app.GetProfile(), app.GetRegion())
 	if err != nil {
 		return err
 	}
 
 	logsClient := cloudwatch.NewClient(rawClient)
-	ctx := context.Background()
+	ctx := cmd.Context()
 
 	// Parse time range
 	startParsed, err := parseTime(fieldsStart)
@@ -86,12 +86,12 @@ func runFields(cmd *cobra.Command, args []string) error {
 	}
 
 	if fieldsEnd == "now" {
-		render.Status("Sampling %d records from %s (last %s)...", fieldsSample, lg, fieldsStart)
+		app.Render.Status("Sampling %d records from %s (last %s)...", fieldsSample, lg, fieldsStart)
 	} else {
-		render.Status("Sampling %d records from %s (%s to %s)...", fieldsSample, lg,
+		app.Render.Status("Sampling %d records from %s (%s to %s)...", fieldsSample, lg,
 			startParsed.Format("2006-01-02 15:04"), endParsed.Format("2006-01-02 15:04"))
 	}
-	render.Newline()
+	app.Render.Newline()
 
 	// Query to get sample records - CloudWatch automatically includes discovered fields
 	// For JSON logs, it auto-parses and returns all fields
@@ -109,8 +109,8 @@ func runFields(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(results) == 0 {
-		render.Warning("No records found in the last %s", fieldsStart)
-		render.Info("Try a longer time range (-s 7d) or check if the log group has data.")
+		app.Render.Warning("No records found in the last %s", fieldsStart)
+		app.Render.Info("Try a longer time range (-s 7d) or check if the log group has data.")
 		return nil
 	}
 
@@ -164,7 +164,7 @@ func runFields(cmd *cobra.Command, args []string) error {
 
 	// Print system fields
 	if len(systemFields) > 0 {
-		render.Section("System Fields")
+		app.Render.Section("System Fields")
 		for _, name := range systemFields {
 			stats := fieldInfo[name]
 			fieldName := ui.LabelStyle.Render(fmt.Sprintf("  %-30s", name))
@@ -179,8 +179,8 @@ func runFields(cmd *cobra.Command, args []string) error {
 
 	// Print custom fields
 	if len(customFields) > 0 {
-		render.Divider()
-		render.Section("Custom Fields")
+		app.Render.Divider()
+		app.Render.Section("Custom Fields")
 		for _, name := range customFields {
 			stats := fieldInfo[name]
 			fieldName := ui.LabelStyle.Render(fmt.Sprintf("  %-30s", name))
@@ -201,8 +201,8 @@ func runFields(cmd *cobra.Command, args []string) error {
 		}
 		sort.Strings(jsonFieldNames)
 
-		render.Divider()
-		render.Section("JSON Fields (from @message)")
+		app.Render.Divider()
+		app.Render.Section("JSON Fields (from @message)")
 		for _, name := range jsonFieldNames {
 			stats := jsonFieldInfo[name]
 			fieldName := ui.LabelStyle.Render(fmt.Sprintf("  %-40s", name))
@@ -214,11 +214,11 @@ func runFields(cmd *cobra.Command, args []string) error {
 			fmt.Printf("%s%s%s\n", fieldName, countInfo, sampleVal)
 		}
 
-		render.Newline()
-		render.Info("Found %d system/custom fields + %d JSON fields across %d sampled records.", len(fieldNames), len(jsonFieldNames), len(results))
+		app.Render.Newline()
+		app.Render.Info("Found %d system/custom fields + %d JSON fields across %d sampled records.", len(fieldNames), len(jsonFieldNames), len(results))
 	} else {
-		render.Newline()
-		render.Info("Found %d fields across %d sampled records.", len(fieldNames), len(results))
+		app.Render.Newline()
+		app.Render.Info("Found %d fields across %d sampled records.", len(fieldNames), len(results))
 	}
 
 	return nil

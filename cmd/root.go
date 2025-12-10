@@ -28,6 +28,12 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "clew",
 	Short: "Follow the thread through your logs",
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Initialize App and store in context for all commands
+		app := NewApp()
+		ctx := SetApp(cmd.Context(), app)
+		cmd.SetContext(ctx)
+	},
 	Long: `clew - a ball of thread; from Greek mythology, the thread Ariadne gave
 Theseus to escape the Minotaur's labyrinth. Follow the clew through your logs.
 
@@ -166,28 +172,19 @@ func getProfile() string {
 	return viper.GetString("profile")
 }
 
-// accountIDCache caches AWS account IDs by profile to avoid repeated STS calls.
-var accountIDCache = make(map[string]string)
-
 // getAccountID returns the AWS account ID for the current profile.
-// Results are cached to avoid repeated API calls during a session.
+// Results are cached in the App to avoid repeated API calls during a session.
+// Deprecated: Use app.GetAccountID() instead when App is available.
 func getAccountID() string {
 	profile := getProfile()
 
-	// Check cache first
-	if id, ok := accountIDCache[profile]; ok {
-		return id
-	}
-
-	// Fetch from AWS
+	// Fetch from AWS (no caching in standalone function)
 	id, err := cloudwatch.GetAccountID(profile, getRegion())
 	if err != nil {
 		Debugf("Failed to get account ID: %v", err)
 		return ""
 	}
 
-	// Cache for future use
-	accountIDCache[profile] = id
 	return id
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jmurray2011/clew/internal/source"
 	"github.com/jmurray2011/clew/internal/ui"
+	"github.com/jmurray2011/clew/pkg/timeutil"
 )
 
 // FormatEntries outputs source entries in the configured format.
@@ -270,7 +271,7 @@ func (f *Formatter) formatSourceStreamsText(streams []source.StreamInfo) error {
 		}
 
 		_, _ = fmt.Fprint(f.writer, ui.MutedStyle.Render("  Size: "))
-		_, _ = fmt.Fprintln(f.writer, formatBytes(s.Size))
+		_, _ = fmt.Fprintln(f.writer, timeutil.FormatBytes(s.Size))
 
 		_, _ = fmt.Fprintln(f.writer)
 	}

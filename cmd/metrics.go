@@ -69,17 +69,18 @@ func init() {
 }
 
 func runMetrics(cmd *cobra.Command, args []string) error {
-	rawClient, err := cloudwatch.NewMetricsClient(getProfile(), getRegion())
+	app := GetApp(cmd)
+	rawClient, err := cloudwatch.NewMetricsClient(app.GetProfile(), app.GetRegion())
 	if err != nil {
 		return err
 	}
 
 	metricsClient := cloudwatch.NewMetricsAPI(rawClient)
-	ctx := context.Background()
+	ctx := cmd.Context()
 
 	// List mode
 	if metricsList {
-		return listMetrics(ctx, metricsClient)
+		return listMetrics(ctx, app, metricsClient)
 	}
 
 	// Query mode requires namespace and metric
@@ -90,11 +91,11 @@ func runMetrics(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--metric (-m) is required for metric queries")
 	}
 
-	return queryMetrics(ctx, metricsClient)
+	return queryMetrics(ctx, app, metricsClient)
 }
 
-func listMetrics(ctx context.Context, client *cloudwatch.MetricsAPI) error {
-	render.Status("Listing metrics...")
+func listMetrics(ctx context.Context, app *App, client *cloudwatch.MetricsAPI) error {
+	app.Render.Status("Listing metrics...")
 
 	metrics, err := client.ListMetrics(ctx, metricsNamespace, metricsMetricName)
 	if err != nil {
@@ -102,7 +103,7 @@ func listMetrics(ctx context.Context, client *cloudwatch.MetricsAPI) error {
 	}
 
 	if len(metrics) == 0 {
-		render.Info("No metrics found.")
+		app.Render.Info("No metrics found.")
 		return nil
 	}
 
@@ -112,7 +113,7 @@ func listMetrics(ctx context.Context, client *cloudwatch.MetricsAPI) error {
 	}
 
 	// Show metrics with dimensions
-	formatter := output.NewFormatter(getOutputFormat(), os.Stdout)
+	formatter := output.NewFormatter(app.GetOutputFormat(), os.Stdout)
 	return formatter.FormatMetricsList(metrics)
 }
 
@@ -148,7 +149,7 @@ func formatMetricsByNamespace(metrics []cloudwatch.MetricInfo) error {
 	return nil
 }
 
-func queryMetrics(ctx context.Context, client *cloudwatch.MetricsAPI) error {
+func queryMetrics(ctx context.Context, app *App, client *cloudwatch.MetricsAPI) error {
 	// Parse time range
 	startTime, endTime, err := parseMetricsTimeRange(metricsStartTime, metricsEndTime)
 	if err != nil {
@@ -171,7 +172,7 @@ func queryMetrics(ctx context.Context, client *cloudwatch.MetricsAPI) error {
 		dimensions[parts[0]] = parts[1]
 	}
 
-	render.Status("Querying %s/%s...", metricsNamespace, metricsMetricName)
+	app.Render.Status("Querying %s/%s...", metricsNamespace, metricsMetricName)
 
 	params := cloudwatch.MetricQueryParams{
 		Namespace:  metricsNamespace,
@@ -189,12 +190,12 @@ func queryMetrics(ctx context.Context, client *cloudwatch.MetricsAPI) error {
 	}
 
 	if len(result.DataPoints) == 0 {
-		render.Info("No data points found for the specified time range.")
+		app.Render.Info("No data points found for the specified time range.")
 		return nil
 	}
 
 	// Format and display results
-	formatter := output.NewFormatter(getOutputFormat(), os.Stdout)
+	formatter := output.NewFormatter(app.GetOutputFormat(), os.Stdout)
 	return formatter.FormatMetricResult(result)
 }
 

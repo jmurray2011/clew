@@ -1,14 +1,14 @@
 package cloudwatch
 
 import (
-	"container/list"
 	"context"
 	"fmt"
-	"log"
 	"net/url"
 	"time"
 
+	"github.com/jmurray2011/clew/internal/logging"
 	"github.com/jmurray2011/clew/internal/source"
+	"github.com/jmurray2011/clew/pkg/lru"
 )
 
 // Default configuration values
@@ -18,56 +18,13 @@ const (
 
 	// DefaultLRUCacheCapacity is the default capacity for the LRU dedup cache
 	DefaultLRUCacheCapacity = 10000
+
+	// DefaultTailLookback is how far back to start when beginning to tail
+	DefaultTailLookback = 5 * time.Second
+
+	// DefaultTailPollInterval is how often to poll for new events when tailing
+	DefaultTailPollInterval = 2 * time.Second
 )
-
-// lruCache is a simple LRU cache for event deduplication.
-// It maintains a fixed capacity and evicts the oldest entries when full.
-type lruCache struct {
-	capacity int
-	items    map[string]*list.Element
-	order    *list.List // front = newest, back = oldest
-}
-
-// newLRUCache creates a new LRU cache with the given capacity.
-func newLRUCache(capacity int) *lruCache {
-	return &lruCache{
-		capacity: capacity,
-		items:    make(map[string]*list.Element),
-		order:    list.New(),
-	}
-}
-
-// contains checks if a key exists in the cache.
-func (c *lruCache) contains(key string) bool {
-	_, exists := c.items[key]
-	return exists
-}
-
-// add adds a key to the cache. If the cache is at capacity,
-// the oldest entry is evicted. Returns true if the key was newly added.
-func (c *lruCache) add(key string) bool {
-	if c.capacity <= 0 {
-		return false // Zero or negative capacity means no caching
-	}
-
-	if _, exists := c.items[key]; exists {
-		return false
-	}
-
-	// Evict oldest if at capacity
-	if c.order.Len() >= c.capacity {
-		oldest := c.order.Back()
-		if oldest != nil {
-			delete(c.items, oldest.Value.(string))
-			c.order.Remove(oldest)
-		}
-	}
-
-	// Add new entry at front
-	elem := c.order.PushFront(key)
-	c.items[key] = elem
-	return true
-}
 
 func init() {
 	// Register the cloudwatch scheme with the source registry
@@ -77,7 +34,7 @@ func init() {
 // Source implements source.Source for AWS CloudWatch Logs.
 type Source struct {
 	logGroup  string
-	client    *Client
+	client    LogsClient
 	profile   string
 	region    string
 	accountID string
@@ -96,7 +53,7 @@ func NewSource(logGroup, profile, region string) (*Source, error) {
 		if r, err := GetResolvedRegion(profile, region); err == nil {
 			resolvedRegion = r
 		} else {
-			log.Printf("[DEBUG] Could not determine AWS region: %v", err)
+			logging.Debug("Could not determine AWS region: %v", err)
 		}
 	}
 
@@ -111,10 +68,19 @@ func NewSource(logGroup, profile, region string) (*Source, error) {
 	if accountID, err := GetAccountID(profile, region); err == nil {
 		s.accountID = accountID
 	} else {
-		log.Printf("[DEBUG] Could not determine AWS account ID: %v", err)
+		logging.Debug("Could not determine AWS account ID: %v", err)
 	}
 
 	return s, nil
+}
+
+// NewSourceWithClient creates a new CloudWatch log source with a custom client.
+// This is primarily used for testing with mock clients.
+func NewSourceWithClient(logGroup string, client LogsClient) *Source {
+	return &Source{
+		logGroup: logGroup,
+		client:   client,
+	}
 }
 
 // openSource is the SourceOpener for the cloudwatch scheme.
@@ -175,12 +141,12 @@ func (s *Source) Tail(ctx context.Context, params source.TailParams) (<-chan sou
 	go func() {
 		defer close(eventChan)
 
-		// Start from now
-		lastTime := time.Now().Add(-5 * time.Second)
-		seenEvents := newLRUCache(DefaultLRUCacheCapacity)
+		// Start with a short lookback to catch recent events
+		lastTime := time.Now().Add(-DefaultTailLookback)
+		seenEvents := lru.New(DefaultLRUCacheCapacity)
 
-		// Poll every 2 seconds
-		ticker := time.NewTicker(2 * time.Second)
+		// Poll at regular intervals
+		ticker := time.NewTicker(DefaultTailPollInterval)
 		defer ticker.Stop()
 
 		for {
@@ -198,17 +164,16 @@ func (s *Source) Tail(ctx context.Context, params source.TailParams) (<-chan sou
 				events, err := s.client.FilterLogEvents(ctx, s.logGroup, filterStr, lastTime, endTime)
 				if err != nil {
 					// Log transient errors for debugging but don't fail
-					log.Printf("[DEBUG] CloudWatch tail transient error: %v", err)
+					logging.Debug("CloudWatch tail transient error: %v", err)
 					continue
 				}
 
 				for _, e := range events {
 					// Deduplicate by message+timestamp using LRU cache
 					key := fmt.Sprintf("%s:%s", e.Timestamp.Format(time.RFC3339Nano), e.Message)
-					if seenEvents.contains(key) {
-						continue
+					if !seenEvents.Add(key) {
+						continue // Already seen
 					}
-					seenEvents.add(key)
 
 					// Apply regex filter if specified
 					if params.Filter != nil && !params.Filter.MatchString(e.Message) {
@@ -258,7 +223,7 @@ func (s *Source) FetchContext(ctx context.Context, entry source.Entry, before, a
 		return nil, nil, err
 	}
 
-	events, err := s.client.getLogEvents(ctx, s.logGroup, entry.Stream, ts.Add(-ContextLookbackWindow), ts, before)
+	events, err := s.client.GetLogEvents(ctx, s.logGroup, entry.Stream, ts.Add(-ContextLookbackWindow), ts, before)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -337,7 +302,7 @@ func (s *Source) AccountID() string {
 }
 
 // Client returns the underlying CloudWatch client for advanced operations.
-func (s *Source) Client() *Client {
+func (s *Source) Client() LogsClient {
 	return s.client
 }
 

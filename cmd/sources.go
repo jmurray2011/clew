@@ -38,15 +38,17 @@ func init() {
 }
 
 func runSources(cmd *cobra.Command, args []string) error {
+	app := GetApp(cmd)
+
 	cfg, err := source.LoadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
 	if len(cfg.Sources) == 0 {
-		render.Info("No source aliases configured.")
-		render.Newline()
-		render.Info("Create aliases in %s:", source.ConfigPath())
+		app.Render.Info("No source aliases configured.")
+		app.Render.Newline()
+		app.Render.Info("Create aliases in %s:", source.ConfigPath())
 		fmt.Println()
 		fmt.Println("  sources:")
 		fmt.Println("    prod-api:")
@@ -82,8 +84,8 @@ func runSources(cmd *cobra.Command, args []string) error {
 	}
 
 	if cfg.DefaultSource != "" {
-		render.Newline()
-		render.Info("Default source: @%s", cfg.DefaultSource)
+		app.Render.Newline()
+		app.Render.Info("Default source: @%s", cfg.DefaultSource)
 	}
 
 	return nil

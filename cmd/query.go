@@ -17,6 +17,7 @@ import (
 	"github.com/jmurray2011/clew/internal/output"
 	"github.com/jmurray2011/clew/internal/source"
 	"github.com/jmurray2011/clew/internal/ui"
+	"github.com/jmurray2011/clew/pkg/timeutil"
 
 	"github.com/spf13/cobra"
 )
@@ -101,6 +102,7 @@ func init() {
 }
 
 func runQuery(cmd *cobra.Command, args []string) error {
+	app := GetApp(cmd)
 	var sourceURI string
 	var multiFiles []string // For shell-expanded globs
 
@@ -125,19 +127,28 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	}
 
 	// Parse time range
-	start, err := parseTimeArg(startTime)
+	start, err := timeutil.Parse(startTime)
 	if err != nil {
 		return fmt.Errorf("invalid start time: %w", err)
 	}
-	end, err := parseTimeArg(endTime)
+	end, err := timeutil.Parse(endTime)
 	if err != nil {
 		return fmt.Errorf("invalid end time: %w", err)
 	}
 
-	Debugf("Time range: %s to %s", start.Format(time.RFC3339), end.Format(time.RFC3339))
+	app.Debugf("Time range: %s to %s", start.Format(time.RFC3339), end.Format(time.RFC3339))
 
 	if !start.Before(end) {
 		return fmt.Errorf("start time must be before end time")
+	}
+
+	// Validate time range and show warnings
+	for _, warning := range timeutil.ValidateTimeRange(start, end) {
+		if warning.Level == "warning" {
+			app.Render.Warning("%s", warning.Message)
+		} else {
+			app.Render.Info("%s", warning.Message)
+		}
 	}
 
 	// Open the source
@@ -161,27 +172,28 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = src.Close() }()
 
-	ctx := context.Background()
-	Debugf("Source type: %s", src.Type())
+	ctx := cmd.Context()
+	app.Debugf("Source type: %s", src.Type())
 
 	// Handle CloudWatch-specific features
-	if src.Type() == "cloudwatch" {
-		cwSrc := src.(*cloudwatch.Source)
-
+	if cwSrc, ok := src.(*cloudwatch.Source); ok {
 		// Handle --dry-run
 		if dryRun {
-			return estimateCloudWatchCost(ctx, cwSrc, start, end)
+			return estimateCloudWatchCost(ctx, app, cwSrc, start, end)
 		}
 
 		// Handle --url
 		if showURL {
 			defer func() {
 				consoleURL := buildConsoleURL(cwSrc.Region(), []string{cwSrc.LogGroup()}, start, end, queryString)
-				render.Newline()
-				render.Info("AWS Console URL:")
-				render.Info("  %s", consoleURL)
+				app.Render.Newline()
+				app.Render.Info("AWS Console URL:")
+				app.Render.Info("  %s", consoleURL)
 			}()
 		}
+	} else if src.Type() == "cloudwatch" {
+		// This shouldn't happen, but log for debugging if it does
+		app.Debugf("Source reports type 'cloudwatch' but is not *cloudwatch.Source")
 	}
 
 	// Build filter regex
@@ -209,7 +221,7 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	}
 
 	// Run query
-	render.Status("Querying %s...", sourceURI)
+	app.Render.Status("Querying %s...", sourceURI)
 	results, err := src.Query(ctx, params)
 	if err != nil {
 		return err
@@ -226,7 +238,7 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	}
 
 	// Format output with highlighting
-	formatter := output.NewFormatter(getOutputFormat(), writer)
+	formatter := output.NewFormatter(app.GetOutputFormat(), writer)
 	if filter != "" && !showStats {
 		formatter.WithHighlight(filter)
 	}
@@ -235,51 +247,55 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	}
 
 	if exportFile != "" {
-		render.Success("Results exported to %s", exportFile)
+		app.Render.Success("Results exported to %s", exportFile)
 	}
 
 	// Record in case timeline (unless --no-capture)
 	if !noCapture {
-		captureQueryToCaseNew(sourceURI, src, start, end, filter, queryString, len(results), markQuery)
+		captureQueryToCaseNew(ctx, sourceURI, src, start, end, filter, queryString, len(results), markQuery)
 	}
 
 	// Cache pointers for evidence collection
-	cachePtrsFromEntries(results, src)
+	cachePtrsFromEntries(ctx, results, src)
 
 	// Watch mode
 	if watchInterval > 0 {
-		return runWatchModeNew(ctx, src, sourceURI, params, filter)
+		return runWatchModeNew(ctx, app, src, sourceURI, params, filter)
 	}
 
 	return nil
 }
 
 // runWatchModeNew runs the query repeatedly at the specified interval.
-func runWatchModeNew(ctx context.Context, src source.Source, sourceURI string, baseParams source.QueryParams, filterPattern string) error {
+func runWatchModeNew(ctx context.Context, app *App, src source.Source, sourceURI string, baseParams source.QueryParams, filterPattern string) error {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 
 	ticker := time.NewTicker(time.Duration(watchInterval) * time.Second)
 	defer ticker.Stop()
 
-	render.Newline()
-	render.Status("Watch mode: refreshing every %ds (Ctrl+C to stop)...", watchInterval)
+	app.Render.Newline()
+	app.Render.Status("Watch mode: refreshing every %ds (Ctrl+C to stop)...", watchInterval)
 
 	for {
 		select {
+		case <-ctx.Done():
+			app.Render.Info("\nWatch mode stopped.")
+			return ctx.Err()
 		case <-sigChan:
-			render.Info("\nWatch mode stopped.")
+			app.Render.Info("\nWatch mode stopped.")
 			return nil
 		case <-ticker.C:
 			// Re-parse times for each iteration
-			start, err := parseTimeArg(startTime)
+			start, err := timeutil.Parse(startTime)
 			if err != nil {
-				render.Warning("invalid start time: %v", err)
+				app.Render.Warning("invalid start time: %v", err)
 				continue
 			}
-			end, err := parseTimeArg(endTime)
+			end, err := timeutil.Parse(endTime)
 			if err != nil {
-				render.Warning("invalid end time: %v", err)
+				app.Render.Warning("invalid end time: %v", err)
 				continue
 			}
 
@@ -289,28 +305,28 @@ func runWatchModeNew(ctx context.Context, src source.Source, sourceURI string, b
 
 			results, err := src.Query(ctx, params)
 			if err != nil {
-				render.Warning("query failed: %v", err)
+				app.Render.Warning("query failed: %v", err)
 				continue
 			}
 
 			// Clear screen and show timestamp
 			fmt.Print("\033[2J\033[H")
-			render.Status("Last updated: %s (%d results)", time.Now().Format("15:04:05"), len(results))
-			render.Newline()
+			app.Render.Status("Last updated: %s (%d results)", time.Now().Format("15:04:05"), len(results))
+			app.Render.Newline()
 
-			formatter := output.NewFormatter(getOutputFormat(), os.Stdout)
+			formatter := output.NewFormatter(app.GetOutputFormat(), os.Stdout)
 			if filterPattern != "" && !showStats {
 				formatter.WithHighlight(filterPattern)
 			}
 			if err := formatter.FormatEntries(results); err != nil {
-				render.Warning("format error: %v", err)
+				app.Render.Warning("format error: %v", err)
 			}
 		}
 	}
 }
 
 // estimateCloudWatchCost estimates CloudWatch query cost.
-func estimateCloudWatchCost(ctx context.Context, src *cloudwatch.Source, start, end time.Time) error {
+func estimateCloudWatchCost(ctx context.Context, app *App, src *cloudwatch.Source, start, end time.Time) error {
 	duration := end.Sub(start)
 
 	group, err := src.Client().GetLogGroup(ctx, src.LogGroup())
@@ -320,7 +336,7 @@ func estimateCloudWatchCost(ctx context.Context, src *cloudwatch.Source, start, 
 
 	var estimatedBytes int64
 	if group.CreationTime.IsZero() || group.StoredBytes == 0 {
-		render.Info("Cost estimate unavailable (no data)")
+		app.Render.Info("Cost estimate unavailable (no data)")
 		return nil
 	}
 
@@ -338,14 +354,14 @@ func estimateCloudWatchCost(ctx context.Context, src *cloudwatch.Source, start, 
 	costPerGB := 0.005
 	costEstimate := float64(estimatedBytes) / (1024 * 1024 * 1024) * costPerGB
 
-	render.RenderCostEstimate(ui.CostEstimate{
+	app.Render.RenderCostEstimate(ui.CostEstimate{
 		LogGroups: []ui.LogGroupEstimate{{
 			Name:          src.LogGroup(),
-			TotalSize:     formatBytesHuman(group.StoredBytes),
-			EstimatedScan: formatBytesHuman(estimatedBytes),
+			TotalSize:     timeutil.FormatBytes(group.StoredBytes),
+			EstimatedScan: timeutil.FormatBytes(estimatedBytes),
 		}},
-		TimeRange:     fmt.Sprintf("%s to %s (%s)", start.Format("2006-01-02 15:04"), end.Format("2006-01-02 15:04"), formatDuration(duration)),
-		TotalBytes:    formatBytesHuman(estimatedBytes),
+		TimeRange:     fmt.Sprintf("%s to %s (%s)", start.Format("2006-01-02 15:04"), end.Format("2006-01-02 15:04"), timeutil.FormatDuration(duration)),
+		TotalBytes:    timeutil.FormatBytes(estimatedBytes),
 		EstimatedCost: costEstimate,
 	})
 
@@ -353,7 +369,7 @@ func estimateCloudWatchCost(ctx context.Context, src *cloudwatch.Source, start, 
 }
 
 // captureQueryToCaseNew adds the query to the active case timeline.
-func captureQueryToCaseNew(sourceURI string, src source.Source, start, end time.Time, filterStr, queryStr string, resultCount int, marked bool) {
+func captureQueryToCaseNew(ctx context.Context, sourceURI string, src source.Source, start, end time.Time, filterStr, queryStr string, resultCount int, marked bool) {
 	mgr, err := cases.NewManager()
 	if err != nil {
 		return
@@ -382,7 +398,6 @@ func captureQueryToCaseNew(sourceURI string, src source.Source, start, end time.
 		Profile:    meta.Profile,
 		AccountID:  meta.AccountID,
 		Command:    strings.Join(cmdParts, " "),
-		LogGroup:   meta.URI, // Deprecated but kept for backward compat
 		Filter:     filterStr,
 		Query:      queryStr,
 		StartTime:  start,
@@ -391,11 +406,11 @@ func captureQueryToCaseNew(sourceURI string, src source.Source, start, end time.
 		Marked:     marked,
 	}
 
-	_ = mgr.AddQueryToTimeline(entry)
+	_ = mgr.AddQueryToTimeline(ctx, entry)
 }
 
 // cachePtrsFromEntries caches pointer values for evidence collection.
-func cachePtrsFromEntries(entries []source.Entry, src source.Source) {
+func cachePtrsFromEntries(ctx context.Context, entries []source.Entry, src source.Source) {
 	var ptrEntries []cases.PtrEntry
 	meta := src.Metadata()
 
@@ -406,8 +421,6 @@ func cachePtrsFromEntries(entries []source.Entry, src source.Source) {
 				SourceURI:  meta.URI,
 				SourceType: meta.Type,
 				Stream:     e.Stream,
-				LogGroup:   meta.URI, // Deprecated but kept for backward compat
-				LogStream:  e.Stream, // Deprecated but kept for backward compat
 				Profile:    meta.Profile,
 				AccountID:  meta.AccountID,
 			})
@@ -423,63 +436,7 @@ func cachePtrsFromEntries(entries []source.Entry, src source.Source) {
 		return
 	}
 
-	_ = mgr.SavePtrCacheWithMetadata(ptrEntries)
-}
-
-// parseTimeArg parses time strings (RFC3339 or relative like "2h", "30m", "7d").
-func parseTimeArg(input string) (time.Time, error) {
-	if input == "" || input == "now" {
-		return time.Now().UTC(), nil
-	}
-
-	// Try RFC3339 first
-	if t, err := time.Parse(time.RFC3339, input); err == nil {
-		return t, nil
-	}
-
-	// Parse relative (e.g., "2h", "30m", "7d")
-	re := regexp.MustCompile(`^(\d+)([mhd])$`)
-	matches := re.FindStringSubmatch(input)
-	if matches != nil {
-		value := 0
-		_, _ = fmt.Sscanf(matches[1], "%d", &value)
-		unit := matches[2]
-		var duration time.Duration
-		switch unit {
-		case "m":
-			duration = time.Duration(value) * time.Minute
-		case "h":
-			duration = time.Duration(value) * time.Hour
-		case "d":
-			duration = time.Duration(value) * 24 * time.Hour
-		}
-		return time.Now().UTC().Add(-duration), nil
-	}
-
-	return time.Time{}, fmt.Errorf("invalid time format: %s - use RFC3339 (2025-12-02T06:00:00Z) or relative (2h, 30m, 7d)", input)
-}
-
-func formatBytesHuman(bytes int64) string {
-	const unit = 1024
-	if bytes < unit {
-		return fmt.Sprintf("%d B", bytes)
-	}
-	div, exp := int64(unit), 0
-	for n := bytes / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
-}
-
-func formatDuration(d time.Duration) string {
-	if d < time.Hour {
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	}
-	if d < 24*time.Hour {
-		return fmt.Sprintf("%.1fh", d.Hours())
-	}
-	return fmt.Sprintf("%.1fd", d.Hours()/24)
+	_ = mgr.SavePtrCacheWithMetadata(ctx, ptrEntries)
 }
 
 // buildConsoleURL generates a CloudWatch Logs Insights console URL.

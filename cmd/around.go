@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"time"
@@ -56,6 +55,7 @@ func init() {
 }
 
 func runAround(cmd *cobra.Command, args []string) error {
+	app := GetApp(cmd)
 	sourceURI := args[0]
 
 	// Parse center timestamp
@@ -81,11 +81,11 @@ func runAround(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = src.Close() }()
 
-	render.Status("Querying logs around %s (±%s)...", centerTime.Format("15:04:05"), aroundWindow)
+	app.Render.Status("Querying logs around %s (±%s)...", centerTime.Format("15:04:05"), aroundWindow)
 
-	ctx := context.Background()
-	Debugf("Source type: %s", src.Type())
-	Debugf("Time range: %s to %s", startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
+	ctx := cmd.Context()
+	app.Debugf("Source type: %s", src.Type())
+	app.Debugf("Time range: %s to %s", startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
 
 	// Build query params
 	params := source.QueryParams{
@@ -100,17 +100,17 @@ func runAround(cmd *cobra.Command, args []string) error {
 	}
 
 	// Cache pointers with metadata for evidence support
-	cachePtrsFromEntries(results, src)
+	cachePtrsFromEntries(ctx, results, src)
 
 	// Format output
-	formatter := output.NewFormatter(getOutputFormat(), os.Stdout)
+	formatter := output.NewFormatter(app.GetOutputFormat(), os.Stdout)
 	if err := formatter.FormatEntries(results); err != nil {
 		return err
 	}
 
 	// Show summary
-	render.Newline()
-	render.Info("Found %d log entries in ±%s window around %s",
+	app.Render.Newline()
+	app.Render.Info("Found %d log entries in ±%s window around %s",
 		len(results), aroundWindow, centerTime.Format("15:04:05"))
 
 	return nil

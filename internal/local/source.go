@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,7 +14,23 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/jmurray2011/clew/internal/logging"
 	"github.com/jmurray2011/clew/internal/source"
+)
+
+// Default configuration values
+const (
+	// DefaultEventChanBuffer is the default buffer size for tail event channels
+	DefaultEventChanBuffer = 100
+
+	// MaxScanTokenSize is the maximum line size when scanning log files (1MB)
+	MaxScanTokenSize = 1024 * 1024
+
+	// FormatDetectionSampleLines is how many lines to sample when detecting log format
+	FormatDetectionSampleLines = 10
+
+	// LogRotationDelay is how long to wait for log rotation to complete before reopening
+	LogRotationDelay = 100 * time.Millisecond
 )
 
 func init() {
@@ -186,9 +201,8 @@ func (s *Source) queryFile(ctx context.Context, filepath string, params source.Q
 	scanner := bufio.NewScanner(f)
 
 	// Handle large lines
-	const maxScanTokenSize = 1024 * 1024 // 1MB
-	buf := make([]byte, maxScanTokenSize)
-	scanner.Buffer(buf, maxScanTokenSize)
+	buf := make([]byte, MaxScanTokenSize)
+	scanner.Buffer(buf, MaxScanTokenSize)
 
 	lineNum := 0
 	var currentEntry *source.Entry
@@ -308,7 +322,7 @@ func (s *Source) Tail(ctx context.Context, params source.TailParams) (<-chan sou
 		return nil, fmt.Errorf("failed to watch file: %w", err)
 	}
 
-	events := make(chan source.Event, 100)
+	events := make(chan source.Event, DefaultEventChanBuffer)
 
 	go s.tailLoop(ctx, f, watcher, filePath, offset, params, events)
 
@@ -396,7 +410,7 @@ func (s *Source) tailLoop(ctx context.Context, f *os.File, watcher *fsnotify.Wat
 			if event.Op&fsnotify.Remove == fsnotify.Remove || event.Op&fsnotify.Rename == fsnotify.Rename {
 				// File was removed/renamed (log rotation)
 				// Try to reopen
-				time.Sleep(100 * time.Millisecond) // Small delay for rotation to complete
+				time.Sleep(LogRotationDelay)
 				newFile, err := os.Open(filePath)
 				if err == nil {
 					_ = f.Close()
@@ -439,7 +453,7 @@ func (s *Source) emitEntry(entry *source.Entry, params source.TailParams, events
 		dropped := atomic.AddInt64(&s.droppedEvents, 1)
 		// Log warning on first drop and every 100 drops thereafter
 		if dropped == 1 || dropped%100 == 0 {
-			log.Printf("[WARN] Event buffer full, dropped %d event(s) - consider increasing buffer size", dropped)
+			logging.Warn("Event buffer full, dropped %d event(s) - consider increasing buffer size", dropped)
 		}
 	}
 }
@@ -639,9 +653,8 @@ func DetectFormat(filepath string) Format {
 
 	scanner := bufio.NewScanner(f)
 	linesChecked := 0
-	maxLines := 10
 
-	for scanner.Scan() && linesChecked < maxLines {
+	for scanner.Scan() && linesChecked < FormatDetectionSampleLines {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue

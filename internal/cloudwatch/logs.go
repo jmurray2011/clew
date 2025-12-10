@@ -29,12 +29,44 @@ const (
 	ContextLookbackWindow = 30 * time.Minute
 )
 
-// Pre-compiled regexes for filter pattern conversion (avoids repeated compilation)
+// Pre-compiled regexes (avoids repeated compilation)
 var (
-	pipeRegex       = regexp.MustCompile(`\|`)
-	whitespaceRegex = regexp.MustCompile(`\s+`)
-	trimSpaceRegex  = regexp.MustCompile(`^\s+|\s+$`)
+	pipeRegex        = regexp.MustCompile(`\|`)
+	whitespaceRegex  = regexp.MustCompile(`\s+`)
+	trimSpaceRegex   = regexp.MustCompile(`^\s+|\s+$`)
+	relativeTimeRe   = regexp.MustCompile(`^(\d+)([mhd])$`)
 )
+
+// LogsClient defines the interface for CloudWatch Logs operations.
+// This interface enables mocking for testing.
+type LogsClient interface {
+	// GetLogGroup returns information about a specific log group.
+	GetLogGroup(ctx context.Context, name string) (LogGroupInfo, error)
+
+	// ListLogGroups returns available log groups.
+	ListLogGroups(ctx context.Context, prefix string, limit int) ([]LogGroupInfo, error)
+
+	// FilterLogEvents returns log events matching a filter pattern (for tailing).
+	FilterLogEvents(ctx context.Context, logGroup, filter string, startTime, endTime time.Time) ([]TailEvent, error)
+
+	// RunInsightsQuery executes a Logs Insights query and returns the results.
+	RunInsightsQuery(ctx context.Context, params QueryParams) ([]LogResult, error)
+
+	// ListStreams returns log streams for a log group.
+	ListStreams(ctx context.Context, logGroup, prefix string, limit int, orderBy string) ([]StreamInfo, error)
+
+	// FetchContext retrieves preceding log events for context around matched results.
+	FetchContext(ctx context.Context, logGroup string, results []LogResult, contextLines int) ([]LogResult, error)
+
+	// GetLogRecord retrieves a single log record by its @ptr value.
+	GetLogRecord(ctx context.Context, ptr string) (LogResult, error)
+
+	// GetLogEvents fetches log events from a specific stream within a time range.
+	GetLogEvents(ctx context.Context, logGroup, logStream string, startTime, endTime time.Time, limit int) ([]LogEvent, error)
+}
+
+// Ensure Client implements LogsClient interface
+var _ LogsClient = (*Client)(nil)
 
 // Client wraps the CloudWatch Logs client with convenience methods.
 type Client struct {
@@ -413,7 +445,7 @@ func (c *Client) FetchContext(ctx context.Context, logGroup string, results []Lo
 			startTime := timestamp.Add(-ContextLookbackWindow)
 			endTime := timestamp.Add(-1 * time.Millisecond)
 
-			events, err := c.getLogEvents(ctx, logGroup, logStream, startTime, endTime, contextLines)
+			events, err := c.GetLogEvents(ctx, logGroup, logStream, startTime, endTime, contextLines)
 			if err != nil {
 				return // Don't fail the whole query if context fetch fails
 			}
@@ -438,7 +470,7 @@ func (c *Client) FetchContext(ctx context.Context, logGroup string, results []Lo
 
 // getLogEvents fetches log events from a specific stream within a time range.
 // Returns events in chronological order (oldest first).
-func (c *Client) getLogEvents(ctx context.Context, logGroup, logStream string, startTime, endTime time.Time, limit int) ([]LogEvent, error) {
+func (c *Client) GetLogEvents(ctx context.Context, logGroup, logStream string, startTime, endTime time.Time, limit int) ([]LogEvent, error) {
 	// Use StartFromHead=true to get events from oldest to newest within the time range
 	// Then we'll take the last N events (most recent before the match)
 	input := &cloudwatchlogs.GetLogEventsInput{
@@ -512,7 +544,16 @@ func parseLogTimestamp(input string) (time.Time, error) {
 
 // ParseTime parses a time string that can be either RFC3339 format or a relative
 // duration like "2h", "30m", or "7d".
+//
+// Deprecated: Use timeutil.Parse from github.com/jmurray2011/clew/pkg/timeutil instead.
+// This function is kept for backward compatibility.
 func ParseTime(input string) (time.Time, error) {
+	return parseTimeInternal(input)
+}
+
+// parseTimeInternal is a local implementation to avoid import cycles.
+// Duplicates logic from pkg/timeutil.Parse.
+func parseTimeInternal(input string) (time.Time, error) {
 	if input == "" || input == "now" {
 		return time.Now().UTC(), nil
 	}
@@ -522,9 +563,8 @@ func ParseTime(input string) (time.Time, error) {
 		return t, nil
 	}
 
-	// Parse relative (e.g., "2h", "30m", "7d")
-	re := regexp.MustCompile(`^(\d+)([mhd])$`)
-	matches := re.FindStringSubmatch(input)
+	// Parse relative (e.g., "2h", "30m", "7d") using pre-compiled regex
+	matches := relativeTimeRe.FindStringSubmatch(input)
 	if matches != nil {
 		value, _ := strconv.Atoi(matches[1])
 		unit := matches[2]

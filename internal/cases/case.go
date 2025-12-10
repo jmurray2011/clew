@@ -2,8 +2,8 @@
 package cases
 
 import (
+	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,7 +12,14 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/jmurray2011/clew/internal/logging"
 	"gopkg.in/yaml.v3"
+)
+
+// Pre-compiled regexes (avoids repeated compilation)
+var (
+	multiHyphenRe = regexp.MustCompile(`-+`)
+	datePatternRe = regexp.MustCompile(`\d{4}-\d{2}-\d{2}`)
 )
 
 // CaseStatus represents the status of an investigation case.
@@ -101,7 +108,10 @@ func NewManager() (*Manager, error) {
 }
 
 // EnsureDirectories creates the necessary directories if they don't exist.
-func (m *Manager) EnsureDirectories() error {
+func (m *Manager) EnsureDirectories(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(m.casesDir, 0755); err != nil {
 		return fmt.Errorf("failed to create cases directory: %w", err)
 	}
@@ -126,9 +136,8 @@ func GenerateSlug(title string) string {
 	}
 	slug = result.String()
 
-	// Collapse multiple hyphens
-	re := regexp.MustCompile(`-+`)
-	slug = re.ReplaceAllString(slug, "-")
+	// Collapse multiple hyphens using pre-compiled regex
+	slug = multiHyphenRe.ReplaceAllString(slug, "-")
 
 	// Trim leading/trailing hyphens
 	slug = strings.Trim(slug, "-")
@@ -143,13 +152,12 @@ func GenerateSlug(title string) string {
 
 // containsDate checks if the string contains a date pattern.
 func containsDate(s string) bool {
-	re := regexp.MustCompile(`\d{4}-\d{2}-\d{2}`)
-	return re.MatchString(s)
+	return datePatternRe.MatchString(s)
 }
 
 // CreateCase creates a new case with the given title.
-func (m *Manager) CreateCase(title, customID string) (*Case, error) {
-	if err := m.EnsureDirectories(); err != nil {
+func (m *Manager) CreateCase(ctx context.Context, title, customID string) (*Case, error) {
+	if err := m.EnsureDirectories(ctx); err != nil {
 		return nil, err
 	}
 
@@ -173,12 +181,12 @@ func (m *Manager) CreateCase(title, customID string) (*Case, error) {
 		Status:  StatusActive,
 	}
 
-	if err := m.SaveCase(c); err != nil {
+	if err := m.SaveCase(ctx, c); err != nil {
 		return nil, err
 	}
 
 	// Set as active case
-	if err := m.SetActiveCase(id); err != nil {
+	if err := m.SetActiveCase(ctx, id); err != nil {
 		return nil, err
 	}
 
@@ -186,7 +194,10 @@ func (m *Manager) CreateCase(title, customID string) (*Case, error) {
 }
 
 // SaveCase saves a case to disk.
-func (m *Manager) SaveCase(c *Case) error {
+func (m *Manager) SaveCase(ctx context.Context, c *Case) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.Updated = time.Now()
 
 	data, err := yaml.Marshal(c)
@@ -203,7 +214,10 @@ func (m *Manager) SaveCase(c *Case) error {
 }
 
 // LoadCase loads a case from disk.
-func (m *Manager) LoadCase(id string) (*Case, error) {
+func (m *Manager) LoadCase(ctx context.Context, id string) (*Case, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	casePath := m.getCasePath(id)
 	data, err := os.ReadFile(casePath)
 	if err != nil {
@@ -222,18 +236,21 @@ func (m *Manager) LoadCase(id string) (*Case, error) {
 }
 
 // DeleteCase removes a case from disk.
-func (m *Manager) DeleteCase(id string) error {
+func (m *Manager) DeleteCase(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	casePath := m.getCasePath(id)
 	if _, err := os.Stat(casePath); os.IsNotExist(err) {
 		return fmt.Errorf("case %q not found", id)
 	}
 
 	// If this is the active case, clear it
-	state, err := m.LoadState()
+	state, err := m.LoadState(ctx)
 	if err != nil {
-		log.Printf("[WARN] Could not load state while deleting case: %v", err)
+		logging.Warn("Could not load state while deleting case: %v", err)
 	} else if state != nil && state.ActiveCase == id {
-		if err := m.ClearActiveCase(); err != nil {
+		if err := m.ClearActiveCase(ctx); err != nil {
 			return err
 		}
 	}
@@ -246,8 +263,8 @@ func (m *Manager) DeleteCase(id string) error {
 }
 
 // ListCases returns all cases.
-func (m *Manager) ListCases() ([]*Case, error) {
-	if err := m.EnsureDirectories(); err != nil {
+func (m *Manager) ListCases(ctx context.Context) ([]*Case, error) {
+	if err := m.EnsureDirectories(ctx); err != nil {
 		return nil, err
 	}
 
@@ -263,9 +280,9 @@ func (m *Manager) ListCases() ([]*Case, error) {
 		}
 
 		id := strings.TrimSuffix(entry.Name(), ".yaml")
-		c, err := m.LoadCase(id)
+		c, err := m.LoadCase(ctx, id)
 		if err != nil {
-			log.Printf("[WARN] Skipping invalid case file %s: %v", entry.Name(), err)
+			logging.Warn("Skipping invalid case file %s: %v", entry.Name(), err)
 			continue
 		}
 		cases = append(cases, c)
@@ -275,8 +292,8 @@ func (m *Manager) ListCases() ([]*Case, error) {
 }
 
 // GetActiveCase returns the currently active case, if any.
-func (m *Manager) GetActiveCase() (*Case, error) {
-	state, err := m.LoadState()
+func (m *Manager) GetActiveCase(ctx context.Context) (*Case, error) {
+	state, err := m.LoadState(ctx)
 	if err != nil {
 		return nil, nil // No state file is OK
 	}
@@ -285,23 +302,26 @@ func (m *Manager) GetActiveCase() (*Case, error) {
 		return nil, nil
 	}
 
-	return m.LoadCase(state.ActiveCase)
+	return m.LoadCase(ctx, state.ActiveCase)
 }
 
 // SetActiveCase sets the active case.
-func (m *Manager) SetActiveCase(id string) error {
+func (m *Manager) SetActiveCase(ctx context.Context, id string) error {
 	state := &State{ActiveCase: id}
-	return m.SaveState(state)
+	return m.SaveState(ctx, state)
 }
 
 // ClearActiveCase clears the active case.
-func (m *Manager) ClearActiveCase() error {
+func (m *Manager) ClearActiveCase(ctx context.Context) error {
 	state := &State{}
-	return m.SaveState(state)
+	return m.SaveState(ctx, state)
 }
 
 // LoadState loads the global state.
-func (m *Manager) LoadState() (*State, error) {
+func (m *Manager) LoadState(ctx context.Context) (*State, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(m.stateFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -319,8 +339,8 @@ func (m *Manager) LoadState() (*State, error) {
 }
 
 // SaveState saves the global state.
-func (m *Manager) SaveState(state *State) error {
-	if err := m.EnsureDirectories(); err != nil {
+func (m *Manager) SaveState(ctx context.Context, state *State) error {
+	if err := m.EnsureDirectories(ctx); err != nil {
 		return err
 	}
 
@@ -342,8 +362,8 @@ func (m *Manager) getCasePath(id string) string {
 }
 
 // CloseCase closes the active case.
-func (m *Manager) CloseCase(summary string) error {
-	c, err := m.GetActiveCase()
+func (m *Manager) CloseCase(ctx context.Context, summary string) error {
+	c, err := m.GetActiveCase(ctx)
 	if err != nil {
 		return err
 	}
@@ -356,21 +376,21 @@ func (m *Manager) CloseCase(summary string) error {
 		c.Summary = summary
 	}
 
-	if err := m.SaveCase(c); err != nil {
+	if err := m.SaveCase(ctx, c); err != nil {
 		return err
 	}
 
-	return m.ClearActiveCase()
+	return m.ClearActiveCase(ctx)
 }
 
 // OpenCase opens/switches to an existing case.
-func (m *Manager) OpenCase(id string) (*Case, error) {
-	c, err := m.LoadCase(id)
+func (m *Manager) OpenCase(ctx context.Context, id string) (*Case, error) {
+	c, err := m.LoadCase(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := m.SetActiveCase(id); err != nil {
+	if err := m.SetActiveCase(ctx, id); err != nil {
 		return nil, err
 	}
 
@@ -378,8 +398,8 @@ func (m *Manager) OpenCase(id string) (*Case, error) {
 }
 
 // GetCaseIDs returns a list of all case IDs (for tab completion).
-func (m *Manager) GetCaseIDs() []string {
-	cases, err := m.ListCases()
+func (m *Manager) GetCaseIDs(ctx context.Context) []string {
+	cases, err := m.ListCases(ctx)
 	if err != nil {
 		return nil
 	}
@@ -392,8 +412,8 @@ func (m *Manager) GetCaseIDs() []string {
 }
 
 // AddQueryToTimeline adds a query to the active case timeline.
-func (m *Manager) AddQueryToTimeline(entry TimelineEntry) error {
-	c, err := m.GetActiveCase()
+func (m *Manager) AddQueryToTimeline(ctx context.Context, entry TimelineEntry) error {
+	c, err := m.GetActiveCase(ctx)
 	if err != nil {
 		return err
 	}
@@ -405,12 +425,12 @@ func (m *Manager) AddQueryToTimeline(entry TimelineEntry) error {
 	entry.Type = "query"
 	c.Timeline = append(c.Timeline, entry)
 
-	return m.SaveCase(c)
+	return m.SaveCase(ctx, c)
 }
 
 // AddNoteToTimeline adds a note to the active case timeline.
-func (m *Manager) AddNoteToTimeline(content, source string) error {
-	c, err := m.GetActiveCase()
+func (m *Manager) AddNoteToTimeline(ctx context.Context, content, source string) error {
+	c, err := m.GetActiveCase(ctx)
 	if err != nil {
 		return err
 	}
@@ -426,12 +446,12 @@ func (m *Manager) AddNoteToTimeline(content, source string) error {
 	}
 	c.Timeline = append(c.Timeline, entry)
 
-	return m.SaveCase(c)
+	return m.SaveCase(ctx, c)
 }
 
 // MarkLastQuery marks the most recent query in the timeline as significant.
-func (m *Manager) MarkLastQuery() error {
-	c, err := m.GetActiveCase()
+func (m *Manager) MarkLastQuery(ctx context.Context) error {
+	c, err := m.GetActiveCase(ctx)
 	if err != nil {
 		return err
 	}
@@ -443,7 +463,7 @@ func (m *Manager) MarkLastQuery() error {
 	for i := len(c.Timeline) - 1; i >= 0; i-- {
 		if c.Timeline[i].Type == "query" {
 			c.Timeline[i].Marked = true
-			return m.SaveCase(c)
+			return m.SaveCase(ctx, c)
 		}
 	}
 
@@ -451,8 +471,8 @@ func (m *Manager) MarkLastQuery() error {
 }
 
 // GetTimeline returns the timeline entries for the active case.
-func (m *Manager) GetTimeline(filterType string, markedOnly bool) ([]TimelineEntry, error) {
-	c, err := m.GetActiveCase()
+func (m *Manager) GetTimeline(ctx context.Context, filterType string, markedOnly bool) ([]TimelineEntry, error) {
+	c, err := m.GetActiveCase(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -475,8 +495,8 @@ func (m *Manager) GetTimeline(filterType string, markedOnly bool) ([]TimelineEnt
 }
 
 // SetSummary sets the summary for the active case.
-func (m *Manager) SetSummary(summary string) error {
-	c, err := m.GetActiveCase()
+func (m *Manager) SetSummary(ctx context.Context, summary string) error {
+	c, err := m.GetActiveCase(ctx)
 	if err != nil {
 		return err
 	}
@@ -485,12 +505,12 @@ func (m *Manager) SetSummary(summary string) error {
 	}
 
 	c.Summary = summary
-	return m.SaveCase(c)
+	return m.SaveCase(ctx, c)
 }
 
 // AddEvidence adds an evidence item to the active case.
-func (m *Manager) AddEvidence(item EvidenceItem) error {
-	c, err := m.GetActiveCase()
+func (m *Manager) AddEvidence(ctx context.Context, item EvidenceItem) error {
+	c, err := m.GetActiveCase(ctx)
 	if err != nil {
 		return err
 	}
@@ -522,12 +542,12 @@ func (m *Manager) AddEvidence(item EvidenceItem) error {
 	}
 	c.Timeline = append(c.Timeline, entry)
 
-	return m.SaveCase(c)
+	return m.SaveCase(ctx, c)
 }
 
 // AnnotateEvidence updates the annotation on an evidence item.
-func (m *Manager) AnnotateEvidence(ptr, annotation string) error {
-	c, err := m.GetActiveCase()
+func (m *Manager) AnnotateEvidence(ctx context.Context, ptr, annotation string) error {
+	c, err := m.GetActiveCase(ctx)
 	if err != nil {
 		return err
 	}
@@ -538,7 +558,7 @@ func (m *Manager) AnnotateEvidence(ptr, annotation string) error {
 	for i := range c.Evidence {
 		if c.Evidence[i].Ptr == ptr {
 			c.Evidence[i].Annotation = annotation
-			return m.SaveCase(c)
+			return m.SaveCase(ctx, c)
 		}
 	}
 
@@ -546,8 +566,8 @@ func (m *Manager) AnnotateEvidence(ptr, annotation string) error {
 }
 
 // GetEvidence returns all evidence for the active case.
-func (m *Manager) GetEvidence() ([]EvidenceItem, error) {
-	c, err := m.GetActiveCase()
+func (m *Manager) GetEvidence(ctx context.Context) ([]EvidenceItem, error) {
+	c, err := m.GetActiveCase(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -583,8 +603,8 @@ func (m *Manager) getPtrCachePath() string {
 }
 
 // SavePtrCache saves a list of @ptr values from query results (legacy).
-func (m *Manager) SavePtrCache(ptrs []string) error {
-	if err := m.EnsureDirectories(); err != nil {
+func (m *Manager) SavePtrCache(ctx context.Context, ptrs []string) error {
+	if err := m.EnsureDirectories(ctx); err != nil {
 		return err
 	}
 
@@ -607,8 +627,8 @@ func (m *Manager) SavePtrCache(ptrs []string) error {
 
 // SavePtrCacheWithMetadata saves @ptr values with their log group and profile metadata.
 // This enables cross-account evidence collection by preserving the source context.
-func (m *Manager) SavePtrCacheWithMetadata(entries []PtrEntry) error {
-	if err := m.EnsureDirectories(); err != nil {
+func (m *Manager) SavePtrCacheWithMetadata(ctx context.Context, entries []PtrEntry) error {
+	if err := m.EnsureDirectories(ctx); err != nil {
 		return err
 	}
 
@@ -637,7 +657,10 @@ func (m *Manager) SavePtrCacheWithMetadata(entries []PtrEntry) error {
 }
 
 // LoadPtrCache loads the cached @ptr values.
-func (m *Manager) LoadPtrCache() (*PtrCache, error) {
+func (m *Manager) LoadPtrCache(ctx context.Context) (*PtrCache, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(m.getPtrCachePath())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -656,8 +679,8 @@ func (m *Manager) LoadPtrCache() (*PtrCache, error) {
 
 // LookupPtrMetadata finds the metadata for a given @ptr value.
 // Returns nil if no metadata is found (e.g., from legacy cache or direct ptr input).
-func (m *Manager) LookupPtrMetadata(ptr string) *PtrEntry {
-	cache, err := m.LoadPtrCache()
+func (m *Manager) LookupPtrMetadata(ctx context.Context, ptr string) *PtrEntry {
+	cache, err := m.LoadPtrCache(ctx)
 	if err != nil || cache == nil {
 		return nil
 	}
@@ -675,14 +698,14 @@ func (m *Manager) LookupPtrMetadata(ptr string) *PtrEntry {
 // ResolvePtrWithMetadata resolves a short @ptr prefix to the full pointer and its metadata.
 // Returns the full pointer and metadata if exactly one match is found.
 // Supports numeric index (1, 2, 3...) to select from cached results.
-func (m *Manager) ResolvePtrWithMetadata(prefix string) (string, *PtrEntry, error) {
+func (m *Manager) ResolvePtrWithMetadata(ctx context.Context, prefix string) (string, *PtrEntry, error) {
 	// If it looks like a full pointer (long enough), look up metadata directly
 	if len(prefix) > 50 {
-		entry := m.LookupPtrMetadata(prefix)
+		entry := m.LookupPtrMetadata(ctx, prefix)
 		return prefix, entry, nil
 	}
 
-	cache, err := m.LoadPtrCache()
+	cache, err := m.LoadPtrCache(ctx)
 	if err != nil {
 		return "", nil, err
 	}
@@ -746,13 +769,13 @@ func (m *Manager) ResolvePtrWithMetadata(prefix string) (string, *PtrEntry, erro
 // Returns the full pointer if exactly one match is found.
 // Supports numeric index (1, 2, 3...) to select from cached results.
 // Returns an error if no matches or multiple matches are found.
-func (m *Manager) ResolvePtr(prefix string) (string, error) {
+func (m *Manager) ResolvePtr(ctx context.Context, prefix string) (string, error) {
 	// If it looks like a full pointer (long enough), just return it
 	if len(prefix) > 50 {
 		return prefix, nil
 	}
 
-	cache, err := m.LoadPtrCache()
+	cache, err := m.LoadPtrCache(ctx)
 	if err != nil {
 		return "", err
 	}

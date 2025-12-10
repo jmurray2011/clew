@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"os"
 
 	"github.com/jmurray2011/clew/internal/cloudwatch"
@@ -38,13 +37,14 @@ func init() {
 }
 
 func runRetention(cmd *cobra.Command, args []string) error {
-	rawClient, err := cloudwatch.NewLogsClient(getProfile(), getRegion())
+	app := GetApp(cmd)
+	rawClient, err := cloudwatch.NewLogsClient(app.GetProfile(), app.GetRegion())
 	if err != nil {
 		return err
 	}
 
 	logsClient := cloudwatch.NewClient(rawClient)
-	ctx := context.Background()
+	ctx := cmd.Context()
 
 	// Resolve alias if provided
 	lg := retentionLogGroup
@@ -69,6 +69,6 @@ func runRetention(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	formatter := output.NewFormatter(getOutputFormat(), os.Stdout)
+	formatter := output.NewFormatter(app.GetOutputFormat(), os.Stdout)
 	return formatter.FormatLogGroups(groups)
 }
