@@ -51,20 +51,25 @@ func TestPlainParser_ParseLine(t *testing.T) {
 	p := &PlainParser{}
 
 	tests := []struct {
-		name     string
-		line     string
-		lineNum  int
-		filePath string
-		wantNil  bool
-		wantMsg  string
+		name      string
+		line      string
+		lineNum   int
+		filePath  string
+		wantNil   bool
+		wantMsg   string
+		wantTime  bool // expect non-zero timestamp
+		wantYear  int  // expected year if wantTime is true
+		wantMonth time.Month
+		wantDay   int
 	}{
 		{
-			name:     "basic line",
+			name:     "basic line no timestamp",
 			line:     "Hello, World!",
 			lineNum:  1,
 			filePath: "/var/log/app.log",
 			wantNil:  false,
 			wantMsg:  "Hello, World!",
+			wantTime: false,
 		},
 		{
 			name:     "empty line",
@@ -80,6 +85,79 @@ func TestPlainParser_ParseLine(t *testing.T) {
 			filePath: "/logs/server.log",
 			wantNil:  false,
 			wantMsg:  "Error: connection failed @ 10.0.0.1:8080",
+			wantTime: false,
+		},
+		{
+			name:      "dpkg format",
+			line:      "2025-12-01 06:08:28 startup archives unpack",
+			lineNum:   1,
+			filePath:  "/var/log/dpkg.log",
+			wantNil:   false,
+			wantMsg:   "startup archives unpack",
+			wantTime:  true,
+			wantYear:  2025,
+			wantMonth: time.December,
+			wantDay:   1,
+		},
+		{
+			name:      "ISO8601 format",
+			line:      "2025-12-01T10:30:45Z Application started",
+			lineNum:   1,
+			filePath:  "/var/log/app.log",
+			wantNil:   false,
+			wantMsg:   "Application started",
+			wantTime:  true,
+			wantYear:  2025,
+			wantMonth: time.December,
+			wantDay:   1,
+		},
+		{
+			name:      "ISO8601 with milliseconds",
+			line:      "2025-12-01T10:30:45.123Z Processing request",
+			lineNum:   1,
+			filePath:  "/var/log/app.log",
+			wantNil:   false,
+			wantMsg:   "Processing request",
+			wantTime:  true,
+			wantYear:  2025,
+			wantMonth: time.December,
+			wantDay:   1,
+		},
+		{
+			name:      "timestamp with milliseconds comma",
+			line:      "2025-12-01 10:30:45,123 INFO Starting service",
+			lineNum:   1,
+			filePath:  "/var/log/app.log",
+			wantNil:   false,
+			wantMsg:   "INFO Starting service",
+			wantTime:  true,
+			wantYear:  2025,
+			wantMonth: time.December,
+			wantDay:   1,
+		},
+		{
+			name:      "bracketed timestamp",
+			line:      "[2025-12-01 10:30:45] User logged in",
+			lineNum:   1,
+			filePath:  "/var/log/app.log",
+			wantNil:   false,
+			wantMsg:   "User logged in",
+			wantTime:  true,
+			wantYear:  2025,
+			wantMonth: time.December,
+			wantDay:   1,
+		},
+		{
+			name:      "US date format",
+			line:      "12/01/2025 10:30:45 System event",
+			lineNum:   1,
+			filePath:  "/var/log/app.log",
+			wantNil:   false,
+			wantMsg:   "System event",
+			wantTime:  true,
+			wantYear:  2025,
+			wantMonth: time.December,
+			wantDay:   1,
 		},
 	}
 
@@ -98,14 +176,149 @@ func TestPlainParser_ParseLine(t *testing.T) {
 			if entry.Message != tt.wantMsg {
 				t.Errorf("Message = %q, want %q", entry.Message, tt.wantMsg)
 			}
-			if entry.Timestamp.IsZero() == false {
-				t.Error("expected zero timestamp for plain parser")
-			}
-			if entry.Stream != "app.log" && entry.Stream != "server.log" {
-				t.Errorf("Stream = %q, want basename of filepath", entry.Stream)
+			if tt.wantTime {
+				if entry.Timestamp.IsZero() {
+					t.Error("expected non-zero timestamp")
+				} else {
+					if entry.Timestamp.Year() != tt.wantYear {
+						t.Errorf("year = %d, want %d", entry.Timestamp.Year(), tt.wantYear)
+					}
+					if entry.Timestamp.Month() != tt.wantMonth {
+						t.Errorf("month = %v, want %v", entry.Timestamp.Month(), tt.wantMonth)
+					}
+					if entry.Timestamp.Day() != tt.wantDay {
+						t.Errorf("day = %d, want %d", entry.Timestamp.Day(), tt.wantDay)
+					}
+				}
+			} else {
+				if !entry.Timestamp.IsZero() {
+					t.Errorf("expected zero timestamp, got %v", entry.Timestamp)
+				}
 			}
 			if entry.Ptr == "" {
 				t.Error("expected non-empty Ptr")
+			}
+		})
+	}
+}
+
+func TestExtractPlainTimestamp(t *testing.T) {
+	tests := []struct {
+		name      string
+		line      string
+		wantMsg   string
+		wantTime  bool
+		wantYear  int
+		wantMonth time.Month
+		wantDay   int
+		wantHour  int
+		wantMin   int
+		wantSec   int
+	}{
+		{
+			name:     "no timestamp",
+			line:     "Just a plain message",
+			wantMsg:  "Just a plain message",
+			wantTime: false,
+		},
+		{
+			name:      "standard format",
+			line:      "2025-12-01 06:08:28 startup archives unpack",
+			wantMsg:   "startup archives unpack",
+			wantTime:  true,
+			wantYear:  2025,
+			wantMonth: time.December,
+			wantDay:   1,
+			wantHour:  6,
+			wantMin:   8,
+			wantSec:   28,
+		},
+		{
+			name:      "with milliseconds dot",
+			line:      "2025-12-01 06:08:28.123 some message",
+			wantMsg:   "some message",
+			wantTime:  true,
+			wantYear:  2025,
+			wantMonth: time.December,
+			wantDay:   1,
+		},
+		{
+			name:      "with milliseconds comma",
+			line:      "2025-12-01 06:08:28,123 some message",
+			wantMsg:   "some message",
+			wantTime:  true,
+			wantYear:  2025,
+			wantMonth: time.December,
+			wantDay:   1,
+		},
+		{
+			name:      "ISO8601 with Z",
+			line:      "2025-12-01T06:08:28Z message",
+			wantMsg:   "message",
+			wantTime:  true,
+			wantYear:  2025,
+			wantMonth: time.December,
+			wantDay:   1,
+		},
+		{
+			name:      "ISO8601 with timezone",
+			line:      "2025-12-01T06:08:28+00:00 message",
+			wantMsg:   "message",
+			wantTime:  true,
+			wantYear:  2025,
+			wantMonth: time.December,
+			wantDay:   1,
+		},
+		{
+			name:      "bracketed timestamp",
+			line:      "[2025-12-01 06:08:28] message here",
+			wantMsg:   "message here",
+			wantTime:  true,
+			wantYear:  2025,
+			wantMonth: time.December,
+			wantDay:   1,
+		},
+		{
+			name:     "timestamp-like but not at start",
+			line:     "Error at 2025-12-01 06:08:28",
+			wantMsg:  "Error at 2025-12-01 06:08:28",
+			wantTime: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts, msg := extractPlainTimestamp(tt.line)
+			if msg != tt.wantMsg {
+				t.Errorf("message = %q, want %q", msg, tt.wantMsg)
+			}
+			if tt.wantTime {
+				if ts.IsZero() {
+					t.Error("expected non-zero timestamp")
+					return
+				}
+				if ts.Year() != tt.wantYear {
+					t.Errorf("year = %d, want %d", ts.Year(), tt.wantYear)
+				}
+				if ts.Month() != tt.wantMonth {
+					t.Errorf("month = %v, want %v", ts.Month(), tt.wantMonth)
+				}
+				if ts.Day() != tt.wantDay {
+					t.Errorf("day = %d, want %d", ts.Day(), tt.wantDay)
+				}
+				if tt.wantHour != 0 && ts.Hour() != tt.wantHour {
+					t.Errorf("hour = %d, want %d", ts.Hour(), tt.wantHour)
+				}
+				if tt.wantMin != 0 && ts.Minute() != tt.wantMin {
+					t.Errorf("minute = %d, want %d", ts.Minute(), tt.wantMin)
+				}
+				if tt.wantSec != 0 && ts.Second() != tt.wantSec {
+					t.Errorf("second = %d, want %d", ts.Second(), tt.wantSec)
+				}
+			} else {
+				if !ts.IsZero() {
+					t.Errorf("expected zero timestamp, got %v", ts)
+				}
 			}
 		})
 	}

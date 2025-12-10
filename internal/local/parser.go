@@ -43,21 +43,125 @@ func NewParser(format Format) Parser {
 	}
 }
 
-// PlainParser treats each line as a separate log entry with no timestamp parsing.
+// PlainParser treats each line as a separate log entry.
+// It attempts to extract timestamps from common prefix formats.
 type PlainParser struct{}
+
+// Common timestamp patterns for plain text logs (order matters - more specific first)
+var plainTimestampPatterns = []struct {
+	pattern *regexp.Regexp
+	layout  string
+	groups  []int // indices of groups to concatenate for parsing
+}{
+	// ISO8601 with T separator: "2025-12-01T06:08:28" or "2025-12-01T06:08:28.123"
+	{regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+`), "", nil},
+	// Standard format with millis: "2025-12-01 06:08:28.123" or "2025-12-01 06:08:28,123"
+	{regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}[,\.]\d+)\s+`), "2006-01-02 15:04:05.000", []int{1, 2}},
+	// Standard format: "2025-12-01 06:08:28"
+	{regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+`), "2006-01-02 15:04:05", []int{1, 2}},
+	// Bracketed: "[2025-12-01 06:08:28]"
+	{regexp.MustCompile(`^\[(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\]\s*`), "2006-01-02 15:04:05", []int{1, 2}},
+	// Program prefix format: "program-name 2025-12-01 06:08:28:" (like update-alternatives)
+	{regexp.MustCompile(`^\S+\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}):\s*`), "2006-01-02 15:04:05", []int{1, 2}},
+	// US format: "12/01/2025 06:08:28"
+	{regexp.MustCompile(`^(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})\s+`), "01/02/2006 15:04:05", []int{1, 2}},
+	// European format: "01/12/2025 06:08:28" or "01-12-2025 06:08:28"
+	{regexp.MustCompile(`^(\d{2}[-/]\d{2}[-/]\d{4})\s+(\d{2}:\d{2}:\d{2})\s+`), "02-01-2006 15:04:05", []int{1, 2}},
+	// Unix timestamp prefix: "[1733043708]" or "(1733043708)"
+	{regexp.MustCompile(`^[\[\(](\d{10,13})[\]\)]\s*`), "unix", []int{1}},
+}
 
 func (p *PlainParser) ParseLine(line string, lineNum int, filePath string) *source.Entry {
 	if line == "" {
 		return nil
 	}
 
-	return &source.Entry{
-		Timestamp: time.Time{}, // Unknown timestamp for plain format
-		Message:   line,
-		Stream:    filepath.Base(filePath),
-		Source:    filePath,
-		Ptr:       source.MakeLocalPtr(filePath, lineNum),
+	entry := &source.Entry{
+		Stream: filepath.Base(filePath),
+		Source: filePath,
+		Ptr:    source.MakeLocalPtr(filePath, lineNum),
 	}
+
+	// Try to extract timestamp from the beginning of the line
+	ts, message := extractPlainTimestamp(line)
+	entry.Timestamp = ts
+	entry.Message = message
+
+	return entry
+}
+
+// extractPlainTimestamp attempts to extract a timestamp from the beginning of a line.
+// Returns the parsed timestamp and the remaining message.
+func extractPlainTimestamp(line string) (time.Time, string) {
+	for _, p := range plainTimestampPatterns {
+		matches := p.pattern.FindStringSubmatch(line)
+		if matches == nil {
+			continue
+		}
+
+		// Calculate where the timestamp portion ends
+		fullMatch := matches[0]
+		message := line[len(fullMatch):]
+
+		// Handle special case: ISO8601 formats (parsed directly)
+		if p.layout == "" {
+			ts := parseISO8601(matches[1])
+			if !ts.IsZero() {
+				return ts, message
+			}
+			continue
+		}
+
+		// Handle special case: Unix timestamp
+		if p.layout == "unix" {
+			if unix, err := strconv.ParseInt(matches[1], 10, 64); err == nil {
+				if unix > 1e12 {
+					return time.UnixMilli(unix), message
+				}
+				return time.Unix(unix, 0), message
+			}
+			continue
+		}
+
+		// Build timestamp string from specified groups
+		var parts []string
+		for _, idx := range p.groups {
+			if idx < len(matches) {
+				parts = append(parts, matches[idx])
+			}
+		}
+		tsStr := strings.Join(parts, " ")
+
+		// Normalize comma to dot for milliseconds
+		tsStr = strings.Replace(tsStr, ",", ".", 1)
+		// Normalize layout too if needed
+		layout := strings.Replace(p.layout, ",", ".", 1)
+
+		if ts, err := time.ParseInLocation(layout, tsStr, time.Local); err == nil {
+			return ts, message
+		}
+	}
+
+	// No timestamp found, return the whole line as message
+	return time.Time{}, line
+}
+
+// parseISO8601 handles various ISO8601 timestamp formats
+func parseISO8601(s string) time.Time {
+	formats := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05.000000000",
+		"2006-01-02T15:04:05.000000",
+		"2006-01-02T15:04:05.000",
+		"2006-01-02T15:04:05",
+	}
+	for _, layout := range formats {
+		if ts, err := time.Parse(layout, s); err == nil {
+			return ts
+		}
+	}
+	return time.Time{}
 }
 
 func (p *PlainParser) IsMultiline() bool        { return false }

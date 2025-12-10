@@ -11,6 +11,7 @@ import (
 
 	"github.com/jmurray2011/clew/internal/cases"
 	"github.com/jmurray2011/clew/internal/cloudwatch"
+	"github.com/jmurray2011/clew/internal/source"
 	"github.com/jmurray2011/clew/internal/ui"
 	"github.com/jmurray2011/clew/pkg/timeutil"
 
@@ -940,95 +941,151 @@ func runCaseKeep(cmd *cobra.Command, args []string) error {
 		app.Render.Info("Resolved to: %s...", ptr[:min(40, len(ptr))])
 	}
 
-	// Use cached profile for cross-account support, fall back to current profile
-	awsProfile := app.GetProfile()
-	if ptrMeta != nil && ptrMeta.Profile != "" {
-		awsProfile = ptrMeta.Profile
-		app.Debugf("Using cached profile: %s", awsProfile)
-	}
+	// Detect pointer type and fetch record using appropriate source
+	ptrType := source.ParsePtrType(ptr)
 
-	// Create AWS client
-	rawClient, err := cloudwatch.NewLogsClient(awsProfile, app.GetRegion())
-	if err != nil {
-		return fmt.Errorf("failed to create AWS client: %w", err)
-	}
+	var entry *source.Entry
+	var profile, accountID, sourceURI, sourceType string
 
-	logsClient := cloudwatch.NewClient(rawClient)
+	switch ptrType {
+	case source.PtrTypeLocal:
+		// Local file pointer - use local source
+		sourceType = "local"
+		info, ok := source.ParseLocalPtr(ptr)
+		if !ok {
+			return fmt.Errorf("invalid local pointer: %s", ptr)
+		}
+		sourceURI = "file://" + info.FilePath
 
-	// Fetch the log record
-	record, err := logsClient.GetLogRecord(ctx, ptr)
-	if err != nil {
-		return fmt.Errorf("failed to fetch log record: %w", err)
-	}
+		src, err := source.Open(sourceURI)
+		if err != nil {
+			return fmt.Errorf("failed to open local source: %w", err)
+		}
+		defer func() { _ = src.Close() }()
 
-	// Extract log group from fields if available
-	logGroup := record.Fields["@logGroup"]
-	if logGroup == "" {
-		// Try to get from @log field (format: "accountId:logGroupName")
-		if logField := record.Fields["@log"]; logField != "" {
-			if parts := strings.SplitN(logField, ":", 2); len(parts) == 2 {
-				logGroup = parts[1]
+		entry, err = src.GetRecord(ctx, ptr)
+		if err != nil {
+			return fmt.Errorf("failed to fetch local log record: %w", err)
+		}
+
+	case source.PtrTypeCloudWatch:
+		// CloudWatch pointer - use CloudWatch source
+		sourceType = "cloudwatch"
+
+		// Use cached profile for cross-account support, fall back to current profile
+		profile = app.GetProfile()
+		if ptrMeta != nil && ptrMeta.Profile != "" {
+			profile = ptrMeta.Profile
+			app.Debugf("Using cached profile: %s", profile)
+		}
+
+		// Build metadata for source opening
+		metadata := &source.SourceMetadata{
+			Profile: profile,
+			Region:  app.GetRegion(),
+		}
+		if ptrMeta != nil {
+			if ptrMeta.SourceURI != "" {
+				metadata.URI = ptrMeta.SourceURI
+			}
+			if ptrMeta.AccountID != "" {
+				accountID = ptrMeta.AccountID
 			}
 		}
-	}
-	// Fall back to cached metadata from query (enables cross-account support)
-	// Prefer SourceURI, fall back to deprecated LogGroup
-	if logGroup == "" && ptrMeta != nil {
-		if ptrMeta.SourceURI != "" {
-			logGroup = ptrMeta.SourceURI
-		} else if ptrMeta.LogGroup != "" {
-			logGroup = ptrMeta.LogGroup
-		}
-	}
-	if logGroup == "" {
-		logGroup = "unknown"
-	}
 
-	// Parse timestamp
-	var ts time.Time
-	if record.Timestamp != "" {
-		ts, _ = time.Parse(time.RFC3339Nano, record.Timestamp)
-	}
+		// If we don't have cached metadata with URI, we need to use CloudWatch API directly
+		// because we can't open a source without knowing the log group
+		if metadata.URI == "" {
+			// Fall back to direct CloudWatch API call
+			rawClient, err := cloudwatch.NewLogsClient(profile, app.GetRegion())
+			if err != nil {
+				return fmt.Errorf("failed to create AWS client: %w", err)
+			}
+			logsClient := cloudwatch.NewClient(rawClient)
 
-	// Determine profile and account ID (prefer cached metadata for cross-account accuracy)
-	profile := app.GetProfile()
-	accountID := app.GetAccountID()
-	if ptrMeta != nil {
-		if ptrMeta.Profile != "" {
-			profile = ptrMeta.Profile
+			record, err := logsClient.GetLogRecord(ctx, ptr)
+			if err != nil {
+				return fmt.Errorf("failed to fetch log record: %w", err)
+			}
+
+			// Extract log group from fields
+			logGroup := record.Fields["@logGroup"]
+			if logGroup == "" {
+				if logField := record.Fields["@log"]; logField != "" {
+					if parts := strings.SplitN(logField, ":", 2); len(parts) == 2 {
+						logGroup = parts[1]
+					}
+				}
+			}
+			if logGroup != "" {
+				sourceURI = "cloudwatch:///" + strings.TrimPrefix(logGroup, "/")
+			}
+
+			// Parse timestamp
+			var ts time.Time
+			if record.Timestamp != "" {
+				ts, _ = time.Parse(time.RFC3339Nano, record.Timestamp)
+			}
+
+			entry = &source.Entry{
+				Timestamp: ts,
+				Message:   record.Message,
+				Stream:    record.LogStream,
+				Source:    logGroup,
+				Ptr:       ptr,
+				Fields:    record.Fields,
+			}
+		} else {
+			sourceURI = "cloudwatch:///" + strings.TrimPrefix(metadata.URI, "/")
+
+			src, err := source.OpenFromPtr(ptr, metadata)
+			if err != nil {
+				return fmt.Errorf("failed to open CloudWatch source: %w", err)
+			}
+			defer func() { _ = src.Close() }()
+
+			entry, err = src.GetRecord(ctx, ptr)
+			if err != nil {
+				return fmt.Errorf("failed to fetch CloudWatch log record: %w", err)
+			}
 		}
-		if ptrMeta.AccountID != "" {
+
+		// Get account ID from cached metadata if available
+		if accountID == "" && ptrMeta != nil {
 			accountID = ptrMeta.AccountID
 		}
-	}
-
-	// Determine source URI (prefer cached metadata)
-	sourceURI := ""
-	sourceType := "cloudwatch"
-	if ptrMeta != nil && ptrMeta.SourceURI != "" {
-		sourceURI = ptrMeta.SourceURI
-		if ptrMeta.SourceType != "" {
-			sourceType = ptrMeta.SourceType
+		if accountID == "" {
+			accountID = app.GetAccountID()
 		}
-	} else if logGroup != "" && logGroup != "unknown" {
-		sourceURI = "cloudwatch:///" + logGroup
+
+	default:
+		return fmt.Errorf("unsupported pointer type: %s", ptr)
 	}
 
-	// Create evidence item with full log record data
+	// Determine source URI from entry if not set
+	if sourceURI == "" && entry.Source != "" {
+		if sourceType == "local" {
+			sourceURI = "file://" + entry.Source
+		} else {
+			sourceURI = "cloudwatch:///" + strings.TrimPrefix(entry.Source, "/")
+		}
+	}
+
+	// Create evidence item from entry
 	item := cases.EvidenceItem{
 		Ptr:        ptr,
-		Message:    record.Message,
-		Timestamp:  ts,
+		Message:    entry.Message,
+		Timestamp:  entry.Timestamp,
 		SourceURI:  sourceURI,
 		SourceType: sourceType,
-		Stream:     record.LogStream,
+		Stream:     entry.Stream,
 		Profile:    profile,
 		AccountID:  accountID,
 		Annotation: keepAnnotation,
-		RawFields:  record.Fields,
+		RawFields:  entry.Fields,
 	}
 
-	// Add to case (reuse mgr from earlier)
+	// Add to case
 	if err := mgr.AddEvidence(ctx, item); err != nil {
 		return err
 	}
