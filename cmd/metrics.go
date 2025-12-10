@@ -10,6 +10,7 @@ import (
 	"github.com/jmurray2011/clew/internal/cloudwatch"
 	"github.com/jmurray2011/clew/internal/output"
 	"github.com/jmurray2011/clew/internal/ui"
+	"github.com/jmurray2011/clew/pkg/timeutil"
 
 	"github.com/spf13/cobra"
 )
@@ -154,6 +155,15 @@ func queryMetrics(ctx context.Context, app *App, client *cloudwatch.MetricsAPI) 
 	startTime, endTime, err := parseMetricsTimeRange(metricsStartTime, metricsEndTime)
 	if err != nil {
 		return err
+	}
+
+	// Validate time range and show warnings
+	for _, warning := range timeutil.ValidateTimeRange(startTime, endTime) {
+		if warning.Level == "warning" {
+			app.Render.Warning("%s", warning.Message)
+		} else {
+			app.Render.Info("%s", warning.Message)
+		}
 	}
 
 	// Parse period
