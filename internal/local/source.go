@@ -672,14 +672,21 @@ func isJavaLogLine(line string) bool {
 	// Common Java log patterns:
 	// - "2025-01-15 10:30:45,123 INFO [class] message"
 	// - "2025-01-15T10:30:45.123Z INFO message"
-	// Look for ISO date followed by log level
-	if len(line) < 20 {
+	// - "15:07:20,910 |-INFO in ..." (logback status)
+	if len(line) < 15 {
 		return false
 	}
 
+	// Check for logback status format: "HH:MM:SS,mmm |-LEVEL"
+	if len(line) >= 20 && line[2] == ':' && line[5] == ':' &&
+		(line[8] == ',' || line[8] == '.') && strings.Contains(line, "|-") {
+		return true
+	}
+
 	// Check for date-like prefix
-	hasDate := (line[4] == '-' && line[7] == '-') || // YYYY-MM-DD
-		(line[2] == '/' && line[5] == '/') // MM/DD/YY
+	hasDate := len(line) >= 10 &&
+		((line[4] == '-' && line[7] == '-') || // YYYY-MM-DD
+			(line[2] == '/' && line[5] == '/')) // MM/DD/YY
 
 	if !hasDate {
 		return false

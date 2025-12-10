@@ -1,6 +1,7 @@
 package local
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -449,6 +450,93 @@ func TestJavaParser_ISOFormat(t *testing.T) {
 	}
 	if entry.Fields["level"] != "DEBUG" {
 		t.Errorf("level = %q, want %q", entry.Fields["level"], "DEBUG")
+	}
+}
+
+func TestJavaParser_LogbackStatus(t *testing.T) {
+	// Initialize parser with a reference date
+	refDate := time.Date(2025, 11, 21, 0, 0, 0, 0, time.Local)
+	p := &JavaParser{referenceDate: refDate}
+
+	line := "15:07:20,910 |-INFO in ch.qos.logback.classic.LoggerContext[default] - This is logback-classic version 1.4.14"
+	entry := p.ParseLine(line, 1, "/var/log/app.log")
+
+	if entry == nil {
+		t.Fatal("expected non-nil entry")
+	}
+	if entry.Fields["level"] != "INFO" {
+		t.Errorf("level = %q, want %q", entry.Fields["level"], "INFO")
+	}
+	if !strings.Contains(entry.Message, "logback-classic version 1.4.14") {
+		t.Errorf("Message = %q, expected to contain logback version", entry.Message)
+	}
+	// Timestamp should use reference date with parsed time
+	if entry.Timestamp.Year() != 2025 || entry.Timestamp.Month() != 11 || entry.Timestamp.Day() != 21 {
+		t.Errorf("Timestamp date = %v, want 2025-11-21", entry.Timestamp)
+	}
+	if entry.Timestamp.Hour() != 15 || entry.Timestamp.Minute() != 7 || entry.Timestamp.Second() != 20 {
+		t.Errorf("Timestamp time = %v, want 15:07:20", entry.Timestamp)
+	}
+}
+
+func TestJavaParser_TimeOnlyWithLevel(t *testing.T) {
+	refDate := time.Date(2025, 12, 1, 0, 0, 0, 0, time.Local)
+	p := &JavaParser{referenceDate: refDate}
+
+	line := "10:30:45,123 WARN Some warning message"
+	entry := p.ParseLine(line, 1, "/var/log/app.log")
+
+	if entry == nil {
+		t.Fatal("expected non-nil entry")
+	}
+	if entry.Fields["level"] != "WARN" {
+		t.Errorf("level = %q, want %q", entry.Fields["level"], "WARN")
+	}
+	if entry.Message != "Some warning message" {
+		t.Errorf("Message = %q, want %q", entry.Message, "Some warning message")
+	}
+	// Check timestamp uses reference date
+	if entry.Timestamp.Year() != 2025 || entry.Timestamp.Month() != 12 || entry.Timestamp.Day() != 1 {
+		t.Errorf("Timestamp date = %v, want 2025-12-01", entry.Timestamp)
+	}
+}
+
+func TestJavaParser_ReferenceDateUpdate(t *testing.T) {
+	// Start with today's date
+	p := &JavaParser{referenceDate: time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local)}
+
+	// Parse a full-date entry - should update reference date
+	fullDateLine := "2025-11-21 15:07:22,165 INFO [main] logger - Starting"
+	entry := p.ParseLine(fullDateLine, 1, "/var/log/app.log")
+
+	if entry == nil {
+		t.Fatal("expected non-nil entry")
+	}
+
+	// Reference date should now be 2025-11-21
+	if p.referenceDate.Year() != 2025 || p.referenceDate.Month() != 11 || p.referenceDate.Day() != 21 {
+		t.Errorf("referenceDate = %v, want 2025-11-21", p.referenceDate)
+	}
+
+	// Now parse a time-only entry - should use updated reference date
+	timeOnlyLine := "15:08:00,000 |-INFO in ch.qos.logback - Status message"
+	entry2 := p.ParseLine(timeOnlyLine, 2, "/var/log/app.log")
+
+	if entry2 == nil {
+		t.Fatal("expected non-nil entry for time-only line")
+	}
+	if entry2.Timestamp.Year() != 2025 || entry2.Timestamp.Month() != 11 || entry2.Timestamp.Day() != 21 {
+		t.Errorf("time-only Timestamp = %v, want date 2025-11-21", entry2.Timestamp)
+	}
+}
+
+func TestJavaParser_ShouldJoinLogbackStatus(t *testing.T) {
+	p := &JavaParser{}
+
+	// Logback status line should NOT be joined (it's a new entry)
+	line := "15:07:20,910 |-INFO in ch.qos.logback - Status"
+	if p.ShouldJoin(line) {
+		t.Errorf("ShouldJoin(%q) = true, want false (logback status is new entry)", line)
 	}
 }
 

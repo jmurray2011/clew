@@ -33,7 +33,11 @@ func NewParser(format Format) Parser {
 	case FormatSyslog:
 		return &SyslogParser{}
 	case FormatJava:
-		return &JavaParser{}
+		// Initialize with today's date as default reference for time-only entries
+		now := time.Now()
+		return &JavaParser{
+			referenceDate: time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local),
+		}
 	default:
 		return &PlainParser{}
 	}
@@ -286,28 +290,51 @@ func (p *SyslogParser) ShouldJoin(string) bool { return false }
 
 // JavaParser handles Java log format with multiline stack traces.
 // Supports common formats like Log4j, Logback, java.util.logging.
-type JavaParser struct{}
+type JavaParser struct {
+	// referenceDate is used for time-only log entries (like logback status).
+	// Updated when we encounter a full date, defaults to today.
+	referenceDate time.Time
+}
 
-// Common Java log patterns
+// Common Java log patterns - full date patterns first, then time-only patterns
 var javaPatterns = []*regexp.Regexp{
-	// Log4j/Logback with millis: "2025-01-15 10:30:45,123 INFO [thread] class - message"
+	// Pattern 0: Log4j/Logback with millis: "2025-01-15 10:30:45,123 INFO [thread] class - message"
 	regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s+(\w+)\s+\[([^\]]+)\]\s+(\S+)\s+-\s+(.*)$`),
-	// Log4j2 with millis: "2025-01-15 10:30:45.123 [thread] INFO class - message"
+	// Pattern 1: Log4j2 with millis: "2025-01-15 10:30:45.123 [thread] INFO class - message"
 	regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s+\[([^\]]+)\]\s+(\w+)\s+(\S+)\s+-\s+(.*)$`),
-	// Spring Boot/Logback without millis: "2025-01-15 10:30:45 [thread] INFO class - message"
+	// Pattern 2: Spring Boot/Logback without millis: "2025-01-15 10:30:45 [thread] INFO class - message"
 	regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+\[([^\]]+)\]\s+(\w+)\s+(\S+)\s+-\s+(.*)$`),
-	// Simple with millis: "2025-01-15 10:30:45,123 INFO message"
+	// Pattern 3: Simple with millis: "2025-01-15 10:30:45,123 INFO message"
 	regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s+(\w+)\s+(.*)$`),
-	// Simple without millis: "2025-01-15 10:30:45 INFO message"
+	// Pattern 4: Simple without millis: "2025-01-15 10:30:45 INFO message"
 	regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+(\w+)\s+(.*)$`),
-	// ISO with level: "2025-01-15T10:30:45.123Z INFO message"
+	// Pattern 5: ISO with level: "2025-01-15T10:30:45.123Z INFO message"
 	regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z?)\s+(\w+)\s+(.*)$`),
+}
+
+// Time-only patterns for logs that lack a date (like logback internal status)
+var javaTimeOnlyPatterns = []*regexp.Regexp{
+	// Pattern 0: Logback status: "15:07:20,910 |-INFO in ch.qos.logback..."
+	regexp.MustCompile(`^(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s+\|-(\w+)\s+in\s+(.*)$`),
+	// Pattern 1: Time-only with level: "15:07:20,910 INFO message"
+	regexp.MustCompile(`^(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s+(\w+)\s+(.*)$`),
+}
+
+// ansiEscapePattern matches ANSI escape sequences
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// stripANSI removes ANSI escape codes from a string
+func stripANSI(s string) string {
+	return ansiEscapePattern.ReplaceAllString(s, "")
 }
 
 func (p *JavaParser) ParseLine(line string, lineNum int, filePath string) *source.Entry {
 	if line == "" {
 		return nil
 	}
+
+	// Strip ANSI escape codes for pattern matching (logs often have color codes)
+	cleanLine := stripANSI(line)
 
 	entry := &source.Entry{
 		Stream: filepath.Base(filePath),
@@ -316,9 +343,9 @@ func (p *JavaParser) ParseLine(line string, lineNum int, filePath string) *sourc
 		Fields: make(map[string]string),
 	}
 
-	// Try each pattern
+	// Try full date patterns first (using cleaned line for matching)
 	for i, pattern := range javaPatterns {
-		if matches := pattern.FindStringSubmatch(line); matches != nil {
+		if matches := pattern.FindStringSubmatch(cleanLine); matches != nil {
 			switch i {
 			case 0: // Log4j/Logback with millis: level [thread] class - message
 				entry.Timestamp = parseJavaTimestamp(matches[1], matches[2])
@@ -355,12 +382,36 @@ func (p *JavaParser) ParseLine(line string, lineNum int, filePath string) *sourc
 				entry.Fields["level"] = matches[2]
 				entry.Message = matches[3]
 			}
+			// Update reference date from full timestamp for subsequent time-only entries
+			if !entry.Timestamp.IsZero() {
+				p.referenceDate = time.Date(
+					entry.Timestamp.Year(), entry.Timestamp.Month(), entry.Timestamp.Day(),
+					0, 0, 0, 0, entry.Timestamp.Location(),
+				)
+			}
 			return entry
 		}
 	}
 
-	// No pattern matched, return plain entry
-	entry.Message = line
+	// Try time-only patterns (using reference date)
+	for i, pattern := range javaTimeOnlyPatterns {
+		if matches := pattern.FindStringSubmatch(cleanLine); matches != nil {
+			switch i {
+			case 0: // Logback status: "15:07:20,910 |-INFO in ..."
+				entry.Timestamp = parseTimeOnly(matches[1], p.referenceDate)
+				entry.Fields["level"] = matches[2]
+				entry.Message = matches[3]
+			case 1: // Time-only with level: "15:07:20,910 INFO message"
+				entry.Timestamp = parseTimeOnly(matches[1], p.referenceDate)
+				entry.Fields["level"] = matches[2]
+				entry.Message = matches[3]
+			}
+			return entry
+		}
+	}
+
+	// No pattern matched, return plain entry (with ANSI stripped for readability)
+	entry.Message = cleanLine
 	return entry
 }
 
@@ -380,6 +431,29 @@ func parseJavaTimestamp(datePart, timePart string) time.Time {
 	return time.Time{}
 }
 
+// parseTimeOnly parses a time-only string and combines it with the reference date.
+func parseTimeOnly(timePart string, refDate time.Time) time.Time {
+	// Normalize comma to dot in milliseconds
+	timePart = strings.Replace(timePart, ",", ".", 1)
+
+	// Parse time components
+	if ts, err := time.Parse("15:04:05.000", timePart); err == nil {
+		return time.Date(
+			refDate.Year(), refDate.Month(), refDate.Day(),
+			ts.Hour(), ts.Minute(), ts.Second(), ts.Nanosecond(),
+			refDate.Location(),
+		)
+	}
+	if ts, err := time.Parse("15:04:05", timePart); err == nil {
+		return time.Date(
+			refDate.Year(), refDate.Month(), refDate.Day(),
+			ts.Hour(), ts.Minute(), ts.Second(), 0,
+			refDate.Location(),
+		)
+	}
+	return time.Time{}
+}
+
 func (p *JavaParser) IsMultiline() bool { return true }
 
 // Exception class name pattern: com.example.SomeException: message
@@ -391,11 +465,14 @@ func (p *JavaParser) ShouldJoin(line string) bool {
 		return true
 	}
 
+	// Strip ANSI codes for pattern matching
+	cleanLine := stripANSI(line)
+
 	// Check for common stack trace patterns
-	trimmed := strings.TrimLeft(line, " \t")
+	trimmed := strings.TrimLeft(cleanLine, " \t")
 
 	// If line starts with whitespace and has content, likely continuation
-	if len(trimmed) < len(line) {
+	if len(trimmed) < len(cleanLine) {
 		// Indented "at " is a stack frame
 		if strings.HasPrefix(trimmed, "at ") {
 			return true
@@ -422,9 +499,16 @@ func (p *JavaParser) ShouldJoin(line string) bool {
 	}
 
 	// If line doesn't start with a timestamp, it's likely a continuation
-	// Check if it matches any of our timestamp patterns
+	// Check if it matches any of our timestamp patterns (full date)
 	for _, pattern := range javaPatterns {
-		if pattern.MatchString(line) {
+		if pattern.MatchString(cleanLine) {
+			return false // This is a new log entry
+		}
+	}
+
+	// Also check time-only patterns (like logback status)
+	for _, pattern := range javaTimeOnlyPatterns {
+		if pattern.MatchString(cleanLine) {
 			return false // This is a new log entry
 		}
 	}
