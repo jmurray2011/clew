@@ -20,12 +20,15 @@ Source aliases can be defined in ~/.clew/config.yaml:
 
   sources:
     prod-api:
-      uri: cloudwatch:///app/api/prod?profile=prod&region=us-east-1
+      uri: cloudwatch:///app/api/prod
     staging:
-      uri: cloudwatch:///app/api/staging?profile=staging
+      uri: cloudwatch:///app/api/staging
     local:
       uri: file:///var/log/app.log
       format: java
+
+  # Default AWS profile (can override with -p flag)
+  profile: prod
 
 Use aliases with @ prefix in commands:
   clew query @prod-api -s 1h -f "error"
@@ -52,9 +55,12 @@ func runSources(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		fmt.Println("  sources:")
 		fmt.Println("    prod-api:")
-		fmt.Println("      uri: cloudwatch:///app/api/prod?profile=prod&region=us-east-1")
+		fmt.Println("      uri: cloudwatch:///app/api/prod")
 		fmt.Println("    local:")
 		fmt.Println("      uri: file:///var/log/app.log")
+		fmt.Println()
+		fmt.Println("  # Default AWS profile")
+		fmt.Println("  profile: prod")
 		return nil
 	}
 

@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	clerrors "github.com/jmurray2011/clew/internal/errors"
 	"github.com/jmurray2011/clew/internal/source"
 	"github.com/jmurray2011/clew/internal/ui"
 	"github.com/jmurray2011/clew/pkg/lru"
@@ -32,19 +33,20 @@ var (
 )
 
 var tailCmd = &cobra.Command{
-	Use:   "tail <source>",
-	Short: "Tail logs in real-time",
+	Use:     "tail <source>",
+	Aliases: []string{"t"},
+	Short:   "Tail logs in real-time",
 	Long: `Follow logs in real-time, similar to 'tail -f'.
 
 Source URIs:
-  cloudwatch:///log-group?profile=x&region=y   AWS CloudWatch Logs
-  file:///path/to/file.log                     Local file
-  /var/log/app.log                             Local file (shorthand)
-  @alias-name                                  Config alias
+  cloudwatch:///log-group      AWS CloudWatch Logs (use -p for profile)
+  file:///path/to/file.log     Local file
+  /var/log/app.log             Local file (shorthand)
+  @alias-name                  Config alias
 
 Examples:
-  # Tail CloudWatch logs
-  clew tail "cloudwatch:///app/logs?profile=prod"
+  # Tail CloudWatch logs (use -p for AWS profile)
+  clew tail "cloudwatch:///app/logs" -p prod
 
   # Tail a local file
   clew tail /var/log/app.log
@@ -53,8 +55,11 @@ Examples:
   clew tail @prod-api -f "error|exception"
 
   # Faster polling (every 2 seconds)
-  clew tail @prod-api --interval 2`,
-	Args: cobra.ExactArgs(1),
+  clew tail @prod-api --interval 2
+
+  # Use default_source from config (if no source specified)
+  clew tail -f "error"`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runTail,
 }
 
@@ -67,9 +72,31 @@ func init() {
 
 func runTail(cmd *cobra.Command, args []string) error {
 	app := GetApp(cmd)
-	sourceURI := args[0]
 
-	src, err := source.Open(sourceURI)
+	// Handle source argument or default_source
+	var sourceURI string
+	if len(args) == 0 {
+		sourceURI = app.GetDefaultSource()
+		if sourceURI == "" {
+			return clerrors.MissingFlagError("<source>", "source is required", []string{
+				"clew tail @alias-name -f \"error\"",
+				"clew tail cloudwatch:///log-group",
+				"clew tail /var/log/app.log",
+				"",
+				"Or set default_source in ~/.clew/config.yaml:",
+				"  default_source: @prod-api",
+			})
+		}
+		app.Debugf("Using default_source: %s", sourceURI)
+	} else {
+		sourceURI = args[0]
+	}
+
+	opts := source.OpenOptions{
+		Profile: app.GetProfile(),
+		Region:  app.GetRegion(),
+	}
+	src, err := source.OpenWithOptions(sourceURI, opts)
 	if err != nil {
 		return fmt.Errorf("failed to open source: %w", err)
 	}

@@ -117,6 +117,12 @@ func (a *App) GetOutputFormat() string {
 	return viper.GetString("output")
 }
 
+// GetDefaultSource returns the default source from config.
+// Returns empty string if not configured.
+func (a *App) GetDefaultSource() string {
+	return viper.GetString("default_source")
+}
+
 // GetAccountID returns the AWS account ID for the current profile.
 // Results are cached to avoid repeated API calls during a session.
 func (a *App) GetAccountID() string {

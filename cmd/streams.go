@@ -14,13 +14,14 @@ var (
 )
 
 var streamsCmd = &cobra.Command{
-	Use:   "streams <source>",
-	Short: "List log streams or files in a source",
+	Use:     "streams <source>",
+	Aliases: []string{"ls"},
+	Short:   "List log streams or files in a source",
 	Long: `List log streams in a CloudWatch log group or files matching a pattern.
 
 Examples:
   # List streams in a CloudWatch log group
-  clew streams "cloudwatch:///app/logs?profile=prod"
+  clew streams "cloudwatch:///app/logs" -p prod
 
   # List streams using a config alias
   clew streams @prod-api
@@ -45,7 +46,11 @@ func runStreams(cmd *cobra.Command, args []string) error {
 	sourceURI := args[0]
 
 	// Open the source
-	src, err := source.Open(sourceURI)
+	opts := source.OpenOptions{
+		Profile: app.GetProfile(),
+		Region:  app.GetRegion(),
+	}
+	src, err := source.OpenWithOptions(sourceURI, opts)
 	if err != nil {
 		return err
 	}

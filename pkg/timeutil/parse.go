@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"time"
+
+	clerrors "github.com/jmurray2011/clew/internal/errors"
 )
 
 // Pre-compiled regex for parsing relative time formats (e.g., "2h", "30m", "7d")
@@ -47,7 +49,7 @@ func Parse(input string) (time.Time, error) {
 		return time.Now().UTC().Add(-duration), nil
 	}
 
-	return time.Time{}, fmt.Errorf("invalid time format: %s - use RFC3339 (2025-12-02T06:00:00Z) or relative (2h, 30m, 7d)", input)
+	return time.Time{}, clerrors.InvalidTimeError(input)
 }
 
 // FormatDuration formats a duration in a human-readable way.

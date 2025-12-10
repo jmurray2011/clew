@@ -5,8 +5,8 @@
 clew uses URIs to identify log sources. You can query CloudWatch Logs, local files, and more:
 
 ```bash
-# CloudWatch Logs (with profile and region)
-clew query 'cloudwatch:///app/api/logs?profile=prod&region=us-east-1' -s 2h -f "error"
+# CloudWatch Logs (with profile and region via -p/-r flags)
+clew query cloudwatch:///app/api/logs -p prod -r us-east-1 -s 2h -f "error"
 
 # Local file (explicit URI)
 clew query file:///var/log/app.log -s 2h -f "error"
@@ -15,7 +15,7 @@ clew query file:///var/log/app.log -s 2h -f "error"
 clew query /var/log/app.log -s 2h -f "error"
 
 # Source alias (defined in config)
-clew query @prod-api -s 1h -f "timeout"
+clew query @prod-api -p prod -s 1h -f "timeout"
 ```
 
 ## Local File Queries
@@ -63,16 +63,16 @@ The filter matches against the log message. For CloudWatch sources with custom f
 
 ```bash
 # CloudWatch: Search for errors in the last 2 hours
-clew query 'cloudwatch:///app/logs?profile=prod' -s 2h -f "error|exception"
+clew query cloudwatch:///app/logs -p prod -s 2h -f "error|exception"
 
 # Local file: Search with time range
-clew query /var/log/app.log -s "2025-01-15T00:00:00Z" -e "2025-01-15T12:00:00Z" -f "timeout"
+clew query /var/log/app.log -s "2025-01-15T00:00:00Z" -u "2025-01-15T12:00:00Z" -f "timeout"
 
 # Limit results
-clew query @api -s 1d -f "OutOfMemory" -l 100
+clew query @api -p prod -s 1d -f "OutOfMemory" -l 100
 
 # Show context lines around each match
-clew query @api -s 2h -f "exception" -C 5
+clew query @api -p prod -s 2h -f "exception" -C 5
 ```
 
 ## Configuring Source Aliases
@@ -80,15 +80,19 @@ clew query @api -s 2h -f "exception" -C 5
 Configure source aliases in `~/.clew/config.yaml`:
 
 ```yaml
+# Set default profile/region (or use -p/-r flags)
+profile: prod
+region: us-east-1
+
 sources:
   prod-api:
-    uri: cloudwatch:///app/api/prod?profile=prod&region=us-east-1
+    uri: cloudwatch:///app/api/prod
   staging:
-    uri: cloudwatch:///app/api/staging?profile=staging
+    uri: cloudwatch:///app/api/staging
   tomcat:
-    uri: cloudwatch:///app/tomcat/logs?profile=prod
+    uri: cloudwatch:///app/tomcat/logs
   waf:
-    uri: cloudwatch:///aws-waf-logs-MyALB?profile=prod
+    uri: cloudwatch:///aws-waf-logs-MyALB
   local:
     uri: file:///var/log/app.log
     format: java
@@ -99,8 +103,11 @@ default_source: prod-api
 Then use `@alias-name` to reference sources:
 
 ```bash
-# Use a configured alias
+# Use a configured alias (profile from config or -p flag)
 clew query @tomcat -s 2h -f "error"
+
+# Override profile/region with flags
+clew query @tomcat -p staging -r eu-west-1 -s 2h -f "error"
 
 # Query local file via alias
 clew query @local -s 1h -f "exception"
@@ -159,10 +166,10 @@ clew history --clear
 
 ```bash
 # Estimate query cost before running
-clew query 'cloudwatch:///app/logs?profile=prod' -s 7d -f "error" --dry-run
+clew query cloudwatch:///app/logs -p prod -s 7d -f "error" --dry-run
 
 # Check cost for a specific log group
-clew query @tomcat -s 30d --dry-run
+clew query @tomcat -p prod -s 30d --dry-run
 ```
 
 **Note:** Cost estimates are only available for CloudWatch sources. Estimates assume uniform log distribution over time. Actual costs may vary based on log patterns and retention settings.
@@ -185,42 +192,45 @@ The URL opens CloudWatch Logs Insights with the same log group, time range, and 
 
 ```bash
 # Discover fields in WAF logs
-clew fields -g aws-waf-logs-MyALB --profile prod
+clew fields cloudwatch:///aws-waf-logs-MyALB -p prod
+
+# Use a config alias
+clew fields @waf -p prod
 
 # Sample more records for better coverage
-clew fields -g aws-waf-logs-MyALB --profile prod --sample 100
+clew fields @waf -p prod -r us-east-1 --sample 100
 
 # Query historical data
-clew fields -g /app/logs --profile prod -s 2023-11-01T00:00:00Z -e 2023-11-30T23:59:59Z
+clew fields cloudwatch:///app/logs -p prod -s 2023-11-01T00:00:00Z -u 2023-11-30T23:59:59Z
 ```
 
 ## Log Groups and Streams (CloudWatch)
 
 ```bash
 # List all log groups
-clew groups --profile prod
+clew groups -p prod -r us-east-1
 
 # Filter by prefix
-clew groups --prefix "/app/" --profile prod
+clew groups --prefix "/app/" -p prod
 
-# List streams in a group
-clew streams -g /app/tomcat/logs --profile prod
+# List streams in a log group (using source URI)
+clew streams cloudwatch:///app/tomcat/logs -p prod
 
 # Filter streams by prefix
-clew streams -g /app/tomcat/logs --profile prod --prefix "i-"
+clew streams cloudwatch:///app/tomcat/logs -p prod --prefix "i-"
 ```
 
 ## Real-time Tailing (CloudWatch)
 
 ```bash
-# Tail logs
-clew tail -g /app/logs --profile prod
+# Tail logs (using source URI)
+clew tail cloudwatch:///app/logs -p prod
 
 # Tail with filter (highlights matches)
-clew tail -g /app/logs --profile prod -f "error"
+clew tail cloudwatch:///app/logs -p prod -r us-east-1 -f "error"
 
-# Tail specific streams
-clew tail -g /app/logs --profile prod --stream "i-abc123"
+# Tail using alias
+clew tail @prod-api -p prod -f "error"
 ```
 
 ## Around Mode
@@ -228,14 +238,14 @@ clew tail -g /app/logs --profile prod --stream "i-abc123"
 Query logs around a specific timestamp - useful when investigating an issue:
 
 ```bash
-# Show logs 5 minutes before/after a timestamp (CloudWatch)
-clew around -g /app/tomcat/logs --profile prod -t "2025-12-04T10:30:00Z"
+# Show logs 5 minutes before/after a timestamp
+clew around cloudwatch:///app/tomcat/logs -p prod -t "2025-12-04T10:30:00Z"
 
-# Specify a different window size
-clew around -g /app/api/logs --profile prod -t "2025-12-04T10:30:00Z" --window 10m
+# Specify a different window size and region
+clew around cloudwatch:///app/api/logs -p prod -r eu-west-1 -t "2025-12-04T10:30:00Z" --window 10m
 
 # Use shorter format for timestamp
-clew around -g /app/tomcat/logs --profile prod -t "2025-12-04 10:30:00" --window 2m
+clew around @prod-api -p prod -t "2025-12-04 10:30:00" --window 2m
 ```
 
 ## Watch Mode
@@ -263,10 +273,10 @@ clew get "CpMBCmQKJjkz..."
 
 ```bash
 # View retention for all groups
-clew retention --profile prod
+clew retention -p prod -r us-east-1
 
 # View retention for specific group
-clew retention -g /app/tomcat/logs --profile prod
+clew retention -g /app/tomcat/logs -p prod
 ```
 
 ## Output Formats
@@ -301,20 +311,25 @@ clew query -g /app/tomcat/logs,/app/api/logs --profile prod -s 2h -f "error"
 
 ## AWS Profile and Region
 
-Specify profile and region in the URI or as flags:
+Specify profile and region with `-p` and `-r` flags:
 
 ```bash
-# In the URI (recommended)
-clew query 'cloudwatch:///app/logs?profile=prod&region=eu-west-1' -s 1h -f "error"
+# Both profile and region as flags (recommended)
+clew query cloudwatch:///app/logs -p prod -r eu-west-1 -s 1h -f "error"
 
-# As global flags
-clew query 'cloudwatch:///app/logs' -s 1h -f "error" --profile prod --region eu-west-1
+# Set defaults in ~/.clew/config.yaml:
+#   profile: prod
+#   region: us-east-1
+# Then override as needed:
+clew query @prod-api -r eu-west-1 -s 1h -f "error"
 
-# Mix: profile in URI, region as flag
-clew query 'cloudwatch:///app/logs?profile=prod' --region eu-west-1 -s 1h -f "error"
-
-# Source alias handles credentials automatically
+# Source alias with default profile from config
 clew query @prod-api -s 1h -f "error"
+
+# Works with all CloudWatch commands
+clew groups -p prod -r us-east-1
+clew streams @prod-api -p prod
+clew metrics -n AWS/Lambda -m Errors -p prod -r eu-west-1
 ```
 
 ## CloudWatch Metrics
@@ -323,26 +338,26 @@ Query CloudWatch metrics to identify spikes and anomalies, then pivot to logs:
 
 ```bash
 # Query ALB request count over 24 hours
-clew metrics -n AWS/ApplicationELB -m RequestCount -s 24h -d "LoadBalancer=app/my-alb/abc123"
+clew metrics -n AWS/ApplicationELB -m RequestCount -p prod -r us-east-1 -s 24h -d "LoadBalancer=app/my-alb/abc123"
 
 # Query 5XX errors with hourly period
-clew metrics -n AWS/ApplicationELB -m HTTPCode_ELB_5XX_Count -s 24h --period 1h
+clew metrics -n AWS/ApplicationELB -m HTTPCode_ELB_5XX_Count -p prod -s 24h --period 1h
 
 # Lambda errors over 7 days
-clew metrics -n AWS/Lambda -m Errors --stat Sum -s 7d --period 1h -d "FunctionName=my-function"
+clew metrics -n AWS/Lambda -m Errors --stat Sum -p prod -s 7d --period 1h -d "FunctionName=my-function"
 
 # List available metrics in a namespace
-clew metrics --list -n AWS/ApplicationELB
+clew metrics --list -n AWS/ApplicationELB -p prod
 
 # Different statistics
-clew metrics -n AWS/EC2 -m CPUUtilization --stat Average -s 6h -d "InstanceId=i-abc123"
+clew metrics -n AWS/EC2 -m CPUUtilization --stat Average -p prod -s 6h -d "InstanceId=i-abc123"
 ```
 
 ### Workflow: Find Spike, Then Search Logs
 
 ```bash
 # 1. Find when 5XX errors spiked
-clew metrics -n AWS/ApplicationELB -m HTTPCode_ELB_5XX_Count -s 24h --period 5m --profile prod
+clew metrics -n AWS/ApplicationELB -m HTTPCode_ELB_5XX_Count -p prod -s 24h --period 5m
 
 # Output shows spike at 2025-12-04 14:30 with bar chart visualization
 # 2025-12-04 14:25        5  ███
@@ -350,7 +365,7 @@ clew metrics -n AWS/ApplicationELB -m HTTPCode_ELB_5XX_Count -s 24h --period 5m 
 # 2025-12-04 14:35        3  ██
 
 # 2. Search application logs around that time
-clew around -g /app/logs --profile prod -t "2025-12-04T14:30:00Z" --window 5m -f "error|exception"
+clew around cloudwatch:///app/logs -p prod -t "2025-12-04T14:30:00Z" --window 5m -f "error|exception"
 ```
 
 ### Output Formats
@@ -521,11 +536,11 @@ clew case delete api-outage-2025-01-15 --force
 clew case new "API latency spike 2025-01-15"
 
 # 2. Check metrics to find the spike
-clew metrics -n AWS/ApplicationELB -m TargetResponseTime -s 6h --period 5m --profile prod
+clew metrics -n AWS/ApplicationELB -m TargetResponseTime -p prod -s 6h --period 5m
 # Spike at 14:30
 
 # 3. Search logs around that time
-clew around -g /app/api/logs --profile prod -t "2025-01-15T14:30:00Z" --window 5m -f "error|slow"
+clew around cloudwatch:///app/api/logs -p prod -t "2025-01-15T14:30:00Z" --window 5m -f "error|slow"
 clew case mark  # Mark this query as significant
 
 # 4. Collect key evidence
@@ -533,7 +548,7 @@ clew case keep 1 -a "First error in spike window"
 clew case keep 3 -a "Stack trace shows connection timeout"
 
 # 5. Search for related patterns
-clew query @api -s 1h -f "connection pool"
+clew query @api -p prod -s 1h -f "connection pool"
 clew case keep 2 -a "Pool exhaustion confirmed"
 
 # 6. Add notes
@@ -544,7 +559,7 @@ clew case note "v2.3.1 changed pool size from 100 to 10 (typo?)"
 clew case summary "Connection pool sized incorrectly in v2.3.1. Changed from 100 to 10 connections due to typo in config."
 
 # 8. Generate report and export
-clew case report -o report.pdf
+clew case report -F report.pdf
 clew case export
 
 # 9. Close case

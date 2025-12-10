@@ -11,6 +11,7 @@ import (
 
 	"github.com/jmurray2011/clew/internal/cases"
 	"github.com/jmurray2011/clew/internal/cloudwatch"
+	clerrors "github.com/jmurray2011/clew/internal/errors"
 	"github.com/jmurray2011/clew/internal/source"
 	"github.com/jmurray2011/clew/internal/ui"
 	"github.com/jmurray2011/clew/pkg/timeutil"
@@ -25,8 +26,9 @@ var (
 )
 
 var caseCmd = &cobra.Command{
-	Use:   "case",
-	Short: "Manage investigation cases",
+	Use:     "case",
+	Aliases: []string{"c"},
+	Short:   "Manage investigation cases",
 	Long: `Manage investigation cases for tracking log investigations.
 
 Cases help you organize your investigation workflow by:
@@ -35,21 +37,24 @@ Cases help you organize your investigation workflow by:
 - Collecting evidence (specific log entries)
 - Generating reports
 
+Run 'clew case' with no subcommand to show the current case status.
+
 Examples:
+  # Show current case status (default action)
+  clew case
+
   # Create a new case
   clew case new "API outage 2024-01-15"
 
   # List all cases
   clew case list
 
-  # Show current case status
-  clew case status
-
   # Switch to an existing case
   clew case open api-outage-2024-01-15
 
   # Close the current case
   clew case close`,
+	RunE: runCaseStatus, // Default to showing status when no subcommand is provided
 }
 
 var caseNewCmd = &cobra.Command{
@@ -133,11 +138,11 @@ var caseDeleteCmd = &cobra.Command{
 	Short: "Delete a case",
 	Long: `Delete an investigation case.
 
-Requires confirmation unless --force is used.
+Requires confirmation unless --yes/-y is used.
 
 Examples:
   clew case delete api-outage-2024-01-15
-  clew case delete api-outage-2024-01-15 --force`,
+  clew case delete api-outage-2024-01-15 -y`,
 	Args:              cobra.ExactArgs(1),
 	RunE:              runCaseDelete,
 	ValidArgsFunction: completeCaseIDs,
@@ -201,7 +206,7 @@ Examples:
   clew case note "Correlates with deploy at 03:13 UTC"
 
   # Add note from file
-  clew case note -f findings.md
+  clew case note -F findings.md
 
   # Open editor to write note
   clew case note -e
@@ -223,7 +228,7 @@ Examples:
   clew case summary "Root cause: connection pool exhaustion after deploy"
 
   # Set from file
-  clew case summary -f summary.md
+  clew case summary -F summary.md
 
   # Open editor
   clew case summary -e`,
@@ -274,7 +279,7 @@ var caseReportCmd = &cobra.Command{
 	Short: "Generate investigation report",
 	Long: `Generate a report of the investigation.
 
-Outputs markdown by default. Use -o to write to a file (format auto-detected
+Outputs markdown by default. Use -F/--file to write to a file (format auto-detected
 from extension) or --format to specify format explicitly.
 
 PDF output requires Typst to be installed (https://typst.app).
@@ -284,9 +289,9 @@ Examples:
   clew case report
 
   # Save to file (format from extension)
-  clew case report -o report.md
-  clew case report -o report.json
-  clew case report -o report.pdf
+  clew case report -F report.md
+  clew case report -F report.json
+  clew case report -F report.pdf
 
   # Include all queries (not just marked)
   clew case report --full`,
@@ -318,20 +323,20 @@ func init() {
 
 	caseNewCmd.Flags().StringVar(&caseCustomID, "id", "", "Custom case ID (slug)")
 	caseListCmd.Flags().StringVar(&caseStatus, "status", "all", "Filter by status: active, closed, all")
-	caseDeleteCmd.Flags().BoolVarP(&caseForce, "force", "f", false, "Skip confirmation")
+	caseDeleteCmd.Flags().BoolVarP(&caseForce, "yes", "y", false, "Skip confirmation")
 	caseTimelineCmd.Flags().BoolVar(&timelineMarkedOnly, "marked", false, "Show only marked (significant) entries")
 	caseTimelineCmd.Flags().StringVar(&timelineType, "type", "", "Filter by type: query, note, evidence")
 
-	caseNoteCmd.Flags().StringVarP(&noteFile, "file", "f", "", "Read note from file")
-	caseNoteCmd.Flags().BoolVarP(&noteEditor, "editor", "e", false, "Open editor to write note")
+	caseNoteCmd.Flags().StringVarP(&noteFile, "file", "F", "", "Read note from file")
+	caseNoteCmd.Flags().BoolVarP(&noteEditor, "edit", "e", false, "Open editor to write note")
 
-	caseSummaryCmd.Flags().StringVarP(&summaryFile, "file", "f", "", "Read summary from file")
-	caseSummaryCmd.Flags().BoolVarP(&summaryEditor, "editor", "e", false, "Open editor to write summary")
+	caseSummaryCmd.Flags().StringVarP(&summaryFile, "file", "F", "", "Read summary from file")
+	caseSummaryCmd.Flags().BoolVarP(&summaryEditor, "edit", "e", false, "Open editor to write summary")
 
 	caseKeepCmd.Flags().StringVarP(&keepAnnotation, "annotation", "a", "", "Add annotation to evidence")
 
 	caseCmd.AddCommand(caseReportCmd)
-	caseReportCmd.Flags().StringVarP(&reportOutput, "output", "o", "", "Output file (format from extension)")
+	caseReportCmd.Flags().StringVarP(&reportOutput, "file", "F", "", "Output file (format from extension)")
 	caseReportCmd.Flags().StringVar(&reportFormat, "format", "md", "Output format: md, json, pdf")
 	caseReportCmd.Flags().BoolVar(&reportFull, "full", false, "Include all queries (not just marked)")
 
@@ -396,7 +401,7 @@ func runCaseClose(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if c == nil {
-		return fmt.Errorf("no active case")
+		return clerrors.NoCaseError()
 	}
 
 	// Prompt for summary if not set
@@ -663,7 +668,7 @@ func runCaseTimeline(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if c == nil {
-		return fmt.Errorf("no active case")
+		return clerrors.NoCaseError()
 	}
 
 	entries, err := mgr.GetTimeline(ctx, timelineType, timelineMarkedOnly)
@@ -957,7 +962,7 @@ func runCaseKeep(cmd *cobra.Command, args []string) error {
 		}
 		sourceURI = "file://" + info.FilePath
 
-		src, err := source.Open(sourceURI)
+		src, err := source.OpenWithOptions(sourceURI, source.OpenOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to open local source: %w", err)
 		}
@@ -1199,7 +1204,7 @@ func runCaseReport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if c == nil {
-		return fmt.Errorf("no active case")
+		return clerrors.NoCaseError()
 	}
 
 	// Determine output format

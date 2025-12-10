@@ -13,6 +13,7 @@ import (
 
 	"github.com/jmurray2011/clew/internal/cases"
 	"github.com/jmurray2011/clew/internal/cloudwatch"
+	clerrors "github.com/jmurray2011/clew/internal/errors"
 	"github.com/jmurray2011/clew/internal/local"
 	"github.com/jmurray2011/clew/internal/output"
 	"github.com/jmurray2011/clew/internal/source"
@@ -40,31 +41,29 @@ var (
 )
 
 var queryCmd = &cobra.Command{
-	Use:   "query <source>",
-	Short: "Query logs from a source",
+	Use:     "query <source>",
+	Aliases: []string{"q"},
+	Short:   "Query logs from a source",
 	Long: `Query logs from CloudWatch, local files, or other sources.
 
 Source URIs:
-  cloudwatch:///log-group?profile=x&region=y   AWS CloudWatch Logs
-  file:///path/to/file.log                     Local file
-  /var/log/app.log                             Local file (shorthand)
-  @alias-name                                  Config alias
+  cloudwatch:///log-group      AWS CloudWatch Logs (use -p for profile)
+  file:///path/to/file.log     Local file
+  /var/log/app.log             Local file (shorthand)
+  @alias-name                  Config alias
 
 Supports both RFC3339 timestamps and relative time formats:
   - RFC3339: 2025-12-02T06:00:00Z
   - Relative: 2h (2 hours ago), 30m (30 minutes ago), 7d (7 days ago)
 
 Examples:
-  # CloudWatch Logs
-  clew query "cloudwatch:///app/logs" -s 2h -f "error"
-  clew query "cloudwatch:///app/logs?profile=prod" -s 1h -f "exception"
+  # CloudWatch Logs (use -p for AWS profile)
+  clew query "cloudwatch:///app/logs" -p prod -s 2h -f "error"
+  clew query @prod-api -s 1h -f "exception"
 
   # Local files
   clew query /var/log/app.log -f "error"
   clew query "file:///var/log/*.log" -s 1h -f "timeout"
-
-  # Config alias
-  clew query @prod-api -s 1h -f "error"
 
   # Show context lines
   clew query @prod-api -s 2h -f "exception" -B 10
@@ -73,8 +72,11 @@ Examples:
   clew query @prod-api -s 1d -f "error" --export errors.json -o json
 
   # Multiple files (shell-expanded glob)
-  clew query ./*.log -s 1h -f "error"`,
-	Args: cobra.MinimumNArgs(1),
+  clew query ./*.log -s 1h -f "error"
+
+  # Use default_source from config (if no source specified)
+  clew query -s 1h -f "error"`,
+	Args: cobra.ArbitraryArgs,
 	RunE: runQuery,
 }
 
@@ -82,7 +84,7 @@ func init() {
 	rootCmd.AddCommand(queryCmd)
 
 	queryCmd.Flags().StringVarP(&startTime, "since", "s", "1h", "Start time - RFC3339 or relative (e.g., 2h, 30m, 7d)")
-	queryCmd.Flags().StringVarP(&endTime, "end", "e", "now", "End time - RFC3339 or relative")
+	queryCmd.Flags().StringVarP(&endTime, "until", "u", "now", "End time - RFC3339 or relative")
 	queryCmd.Flags().StringVarP(&filter, "filter", "f", "", "Regex filter for messages")
 	queryCmd.Flags().StringVarP(&queryString, "query", "q", "", "Full query (CloudWatch Insights syntax for cloudwatch sources)")
 	queryCmd.Flags().IntVarP(&limit, "limit", "l", 500, "Max results to return")
@@ -106,8 +108,23 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	var sourceURI string
 	var multiFiles []string // For shell-expanded globs
 
-	// Handle multiple arguments (shell-expanded glob)
-	if len(args) > 1 && looksLikeLocalFiles(args) {
+	// Handle source argument or default_source
+	if len(args) == 0 {
+		// No source specified - try default_source from config
+		sourceURI = app.GetDefaultSource()
+		if sourceURI == "" {
+			return clerrors.MissingFlagError("<source>", "source is required", []string{
+				"clew query @alias-name -s 1h -f \"error\"",
+				"clew query cloudwatch:///log-group -s 1h",
+				"clew query /var/log/app.log -f \"error\"",
+				"",
+				"Or set default_source in ~/.clew/config.yaml:",
+				"  default_source: @prod-api",
+			})
+		}
+		app.Debugf("Using default_source: %s", sourceURI)
+	} else if len(args) > 1 && looksLikeLocalFiles(args) {
+		// Handle multiple arguments (shell-expanded glob)
 		multiFiles = args
 		sourceURI = args[0] // Use first file for display, actual files handled separately
 	} else {
@@ -165,7 +182,11 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		}
 		sourceURI = src.Metadata().URI // Update for display
 	} else {
-		src, err = source.Open(sourceURI)
+		opts := source.OpenOptions{
+			Profile: app.GetProfile(),
+			Region:  app.GetRegion(),
+		}
+		src, err = source.OpenWithOptions(sourceURI, opts)
 		if err != nil {
 			return fmt.Errorf("failed to open source: %w", err)
 		}

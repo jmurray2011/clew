@@ -32,13 +32,13 @@ Examples:
   clew case export
   # -> Creates <case-id>.zip
 
-  clew case export -o investigation.zip`,
+  clew case export -F investigation.zip`,
 	RunE: runCaseExport,
 }
 
 func initCaseExport() {
 	caseCmd.AddCommand(caseExportCmd)
-	caseExportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "Output zip file (default: <case-id>.zip)")
+	caseExportCmd.Flags().StringVarP(&exportOutput, "file", "F", "", "Output zip file (default: <case-id>.zip)")
 }
 
 func runCaseExport(cmd *cobra.Command, args []string) error {

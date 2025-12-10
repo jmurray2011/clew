@@ -48,7 +48,7 @@ type Source struct {
 }
 
 // openSource opens a local file source from a parsed URL.
-func openSource(u *url.URL) (source.Source, error) {
+func openSource(u *url.URL, _ source.OpenOptions) (source.Source, error) {
 	pattern := u.Path
 	if pattern == "" {
 		return nil, fmt.Errorf("file:// URI requires a path")

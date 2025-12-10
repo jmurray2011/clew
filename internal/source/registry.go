@@ -6,10 +6,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	clerrors "github.com/jmurray2011/clew/internal/errors"
 )
 
 // SourceOpener is a function that opens a source from a parsed URL.
-type SourceOpener func(u *url.URL) (Source, error)
+type SourceOpener func(u *url.URL, opts OpenOptions) (Source, error)
+
+// OpenOptions provides default values for source configuration.
+// These can be overridden by URI query parameters or alias config.
+type OpenOptions struct {
+	Profile string // Default AWS profile
+	Region  string // Default AWS region
+}
 
 // registry holds registered source openers by scheme.
 var registry = make(map[string]SourceOpener)
@@ -21,12 +30,18 @@ func Register(scheme string, opener SourceOpener) {
 }
 
 // Open parses a URI and returns the appropriate Source.
+// For CloudWatch sources, use OpenWithOptions to specify default profile/region.
+func Open(uri string) (Source, error) {
+	return OpenWithOptions(uri, OpenOptions{})
+}
+
+// OpenWithOptions parses a URI and returns the appropriate Source with default options.
 // Supports:
-//   - cloudwatch:///log-group?profile=x&region=y
+//   - cloudwatch:///log-group (uses -p profile flag)
 //   - file:///path/to/file (or bare paths like /var/log/app.log)
 //   - s3://bucket/prefix
 //   - @alias (resolved from config)
-func Open(uri string) (Source, error) {
+func OpenWithOptions(uri string, opts OpenOptions) (Source, error) {
 	// Handle bare paths as file://
 	if strings.HasPrefix(uri, "/") || strings.HasPrefix(uri, "./") || strings.HasPrefix(uri, "../") || strings.HasPrefix(uri, "~") {
 		// Resolve to absolute path to avoid url.Parse misinterpreting relative paths
@@ -36,7 +51,7 @@ func Open(uri string) (Source, error) {
 
 	// Handle @alias references
 	if strings.HasPrefix(uri, "@") {
-		return OpenAlias(uri[1:])
+		return OpenAliasWithOptions(uri[1:], opts)
 	}
 
 	// Detect common URI mistakes
@@ -54,7 +69,7 @@ func Open(uri string) (Source, error) {
 		return nil, fmt.Errorf("unknown source scheme: %s (available: %s)", parsed.Scheme, availableSchemes())
 	}
 
-	return opener(parsed)
+	return opener(parsed, opts)
 }
 
 // validateURISyntax checks for common URI mistakes and returns helpful errors.
@@ -68,7 +83,7 @@ func validateURISyntax(uri string) error {
 			afterAt := rest[atIdx+1:]
 			// Check if it looks like a query parameter (contains =)
 			if strings.Contains(afterAt, "=") && !strings.Contains(rest[:atIdx], "?") {
-				return fmt.Errorf("invalid URI %q: use '?' for query parameters, not '@' (e.g., cloudwatch:///log-group?profile=x)", uri)
+				return fmt.Errorf("invalid URI %q: use '?' for query parameters, not '@'", uri)
 			}
 		}
 	}
@@ -83,6 +98,11 @@ func validateURISyntax(uri string) error {
 
 // OpenAlias resolves a config alias to a Source.
 func OpenAlias(name string) (Source, error) {
+	return OpenAliasWithOptions(name, OpenOptions{})
+}
+
+// OpenAliasWithOptions resolves a config alias to a Source with default options.
+func OpenAliasWithOptions(name string, opts OpenOptions) (Source, error) {
 	cfg, err := LoadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
@@ -92,12 +112,12 @@ func OpenAlias(name string) (Source, error) {
 	if !ok {
 		available := make([]string, 0, len(cfg.Sources))
 		for k := range cfg.Sources {
-			available = append(available, "@"+k)
+			available = append(available, k)
 		}
-		return nil, fmt.Errorf("unknown source alias @%s (available: %s)", name, strings.Join(available, ", "))
+		return nil, clerrors.SourceNotFoundError("@"+name, available)
 	}
 
-	return Open(alias.URI)
+	return OpenWithOptions(alias.URI, opts)
 }
 
 // OpenFromPtr opens a source capable of retrieving the given pointer.
@@ -118,20 +138,13 @@ func OpenFromPtr(ptr string, metadata *SourceMetadata) (Source, error) {
 		if metadata == nil {
 			return nil, fmt.Errorf("CloudWatch pointer requires cached metadata (profile/region)")
 		}
-		// Build URI from metadata
+		// Build URI and options from metadata
 		uri := fmt.Sprintf("cloudwatch://%s", metadata.URI)
-		if metadata.Profile != "" || metadata.Region != "" {
-			uri += "?"
-			params := url.Values{}
-			if metadata.Profile != "" {
-				params.Set("profile", metadata.Profile)
-			}
-			if metadata.Region != "" {
-				params.Set("region", metadata.Region)
-			}
-			uri += params.Encode()
+		opts := OpenOptions{
+			Profile: metadata.Profile,
+			Region:  metadata.Region,
 		}
-		return Open(uri)
+		return OpenWithOptions(uri, opts)
 
 	case PtrTypeS3:
 		info, ok := ParseS3Ptr(ptr)

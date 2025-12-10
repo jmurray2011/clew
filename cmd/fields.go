@@ -8,63 +8,101 @@ import (
 	"time"
 
 	"github.com/jmurray2011/clew/internal/cloudwatch"
+	clerrors "github.com/jmurray2011/clew/internal/errors"
+	"github.com/jmurray2011/clew/internal/source"
 	"github.com/jmurray2011/clew/internal/ui"
+	"github.com/jmurray2011/clew/pkg/timeutil"
 
 	"github.com/spf13/cobra"
 )
 
 var (
-	fieldsLogGroup string
+	fieldsLogGroup string // Deprecated: use source URI
 	fieldsSample   int
 	fieldsStart    string
 	fieldsEnd      string
 )
 
 var fieldsCmd = &cobra.Command{
-	Use:   "fields",
-	Short: "Discover available fields in a log group",
+	Use:     "fields [source]",
+	Aliases: []string{"f"},
+	Short:   "Discover available fields in a log group",
 	Long: `Query a log group to discover what fields are available.
 
 Useful for structured logs (WAF, VPC Flow Logs, JSON application logs)
 where you need to know what fields can be queried.
 
+Source URIs:
+  cloudwatch:///log-group      AWS CloudWatch Logs (use -p for profile)
+  @alias-name                  Config alias
+
 Examples:
   # Discover fields in WAF logs
-  clew fields -g "aws-waf-logs-MyALB"
+  clew fields cloudwatch:///aws-waf-logs-MyALB -p prod
 
-  # Use an alias
-  clew fields -g waf
+  # Use a config alias
+  clew fields @waf -p prod
 
   # Sample more records for better field coverage
-  clew fields -g waf --sample 100
+  clew fields @waf -p prod --sample 100
 
   # Look back further if no recent data
-  clew fields -g api -s 7d
+  clew fields @api -p prod -s 7d
 
   # Query a specific historical window
-  clew fields -g api -s 2023-11-01T00:00:00Z -e 2023-11-30T23:59:59Z`,
+  clew fields @api -p prod -s 2023-11-01T00:00:00Z -u 2023-11-30T23:59:59Z`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runFields,
 }
 
 func init() {
 	rootCmd.AddCommand(fieldsCmd)
 
-	fieldsCmd.Flags().StringVarP(&fieldsLogGroup, "log-group", "g", "", "Log group name (required)")
+	fieldsCmd.Flags().StringVarP(&fieldsLogGroup, "log-group", "g", "", "Log group name (deprecated: use source URI)")
 	fieldsCmd.Flags().IntVar(&fieldsSample, "sample", 20, "Number of records to sample")
-	fieldsCmd.Flags().StringVarP(&fieldsStart, "start", "s", "1h", "Start time - relative (1h, 7d) or RFC3339")
-	fieldsCmd.Flags().StringVarP(&fieldsEnd, "end", "e", "now", "End time - relative or RFC3339")
+	fieldsCmd.Flags().StringVarP(&fieldsStart, "since", "s", "1h", "Start time - relative (1h, 7d) or RFC3339")
+	fieldsCmd.Flags().StringVarP(&fieldsEnd, "until", "u", "now", "End time - relative or RFC3339")
+
+	// Mark -g as deprecated but still functional
+	_ = fieldsCmd.Flags().MarkDeprecated("log-group", "use source URI argument instead (e.g., 'clew fields cloudwatch:///log-group -p prod')")
 }
 
 func runFields(cmd *cobra.Command, args []string) error {
 	app := GetApp(cmd)
-	lg := fieldsLogGroup
-	if lg == "" {
-		lg = getDefaultLogGroup()
+	ctx := cmd.Context()
+
+	var logGroup string
+
+	// Handle source argument or legacy -g flag
+	if len(args) > 0 {
+		// New style: source URI argument
+		sourceURI := args[0]
+		opts := source.OpenOptions{
+			Profile: app.GetProfile(),
+			Region:  app.GetRegion(),
+		}
+		src, err := source.OpenWithOptions(sourceURI, opts)
+		if err != nil {
+			return fmt.Errorf("failed to open source: %w", err)
+		}
+		defer func() { _ = src.Close() }()
+
+		// Fields discovery only works for CloudWatch sources
+		cwSrc, ok := src.(*cloudwatch.Source)
+		if !ok {
+			return fmt.Errorf("fields command only supports CloudWatch sources (got %s)", src.Type())
+		}
+		logGroup = cwSrc.LogGroup()
+	} else if fieldsLogGroup != "" {
+		// Legacy style: -g flag (deprecated)
+		logGroup = resolveLogGroup(fieldsLogGroup)
 	} else {
-		lg = resolveLogGroup(lg)
-	}
-	if lg == "" {
-		return fmt.Errorf("--log-group is required")
+		// No source specified
+		return clerrors.MissingFlagError("<source>", "source is required", []string{
+			"clew fields cloudwatch:///log-group -p prod",
+			"clew fields @waf -p prod",
+			"clew fields @alias --sample 100",
+		})
 	}
 
 	rawClient, err := cloudwatch.NewLogsClient(app.GetProfile(), app.GetRegion())
@@ -73,7 +111,6 @@ func runFields(cmd *cobra.Command, args []string) error {
 	}
 
 	logsClient := cloudwatch.NewClient(rawClient)
-	ctx := cmd.Context()
 
 	// Parse time range
 	startParsed, err := parseTime(fieldsStart)
@@ -85,10 +122,10 @@ func runFields(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid end time %q: %w", fieldsEnd, err)
 	}
 
-	if fieldsEnd == "now" {
-		app.Render.Status("Sampling %d records from %s (last %s)...", fieldsSample, lg, fieldsStart)
+	if fieldsEnd == "now" || fieldsEnd == "" {
+		app.Render.Status("Sampling %d records from %s (last %s)...", fieldsSample, logGroup, fieldsStart)
 	} else {
-		app.Render.Status("Sampling %d records from %s (%s to %s)...", fieldsSample, lg,
+		app.Render.Status("Sampling %d records from %s (%s to %s)...", fieldsSample, logGroup,
 			startParsed.Format("2006-01-02 15:04"), endParsed.Format("2006-01-02 15:04"))
 	}
 	app.Render.Newline()
@@ -98,7 +135,7 @@ func runFields(cmd *cobra.Command, args []string) error {
 	query := fmt.Sprintf("limit %d", fieldsSample)
 
 	results, err := logsClient.RunInsightsQuery(ctx, cloudwatch.QueryParams{
-		LogGroup:  lg,
+		LogGroup:  logGroup,
 		StartTime: startParsed,
 		EndTime:   endParsed,
 		Query:     query,
@@ -299,5 +336,5 @@ func truncateValue(s string, maxLen int) string {
 }
 
 func parseTime(s string) (time.Time, error) {
-	return cloudwatch.ParseTime(s)
+	return timeutil.Parse(s)
 }

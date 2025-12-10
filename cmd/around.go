@@ -26,14 +26,14 @@ Useful when investigating an issue: find the error, then see what
 happened before and after it.
 
 Source URIs:
-  cloudwatch:///log-group?profile=x&region=y   AWS CloudWatch Logs
-  file:///path/to/file.log                     Local file
-  /var/log/app.log                             Local file (shorthand)
-  @alias-name                                  Config alias
+  cloudwatch:///log-group      AWS CloudWatch Logs (use -p for profile)
+  file:///path/to/file.log     Local file
+  /var/log/app.log             Local file (shorthand)
+  @alias-name                  Config alias
 
 Examples:
   # Show logs 5 minutes before/after a timestamp
-  clew around "cloudwatch:///app/logs" -t "2025-12-04T10:30:00Z"
+  clew around "cloudwatch:///app/logs" -p prod -t "2025-12-04T10:30:00Z"
 
   # Specify a different window size
   clew around @prod-api -t "2025-12-04T10:30:00Z" --window 10m
@@ -75,7 +75,11 @@ func runAround(cmd *cobra.Command, args []string) error {
 	endTime := centerTime.Add(windowDur)
 
 	// Open the source
-	src, err := source.Open(sourceURI)
+	opts := source.OpenOptions{
+		Profile: app.GetProfile(),
+		Region:  app.GetRegion(),
+	}
+	src, err := source.OpenWithOptions(sourceURI, opts)
 	if err != nil {
 		return fmt.Errorf("failed to open source: %w", err)
 	}

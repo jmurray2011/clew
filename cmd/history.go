@@ -34,8 +34,9 @@ type HistoryEntry struct {
 }
 
 var historyCmd = &cobra.Command{
-	Use:   "history",
-	Short: "View query history",
+	Use:     "history",
+	Aliases: []string{"h"},
+	Short:   "View query history",
 	Long: `View and manage your query history.
 
 Shows recent queries that have been executed, allowing you to

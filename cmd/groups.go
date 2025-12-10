@@ -15,8 +15,9 @@ var (
 )
 
 var groupsCmd = &cobra.Command{
-	Use:   "groups",
-	Short: "List available log groups",
+	Use:     "groups",
+	Aliases: []string{"lg"},
+	Short:   "List available log groups",
 	Long: `List CloudWatch log groups in the account.
 
 Examples:

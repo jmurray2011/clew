@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jmurray2011/clew/internal/cloudwatch"
 	_ "github.com/jmurray2011/clew/internal/local" // Register file:// source
 	"github.com/jmurray2011/clew/internal/ui"
 
@@ -41,32 +40,33 @@ A CLI tool for querying logs from multiple sources.
 Supports CloudWatch Logs, local files, and more.
 
 Source URIs:
-  cloudwatch:///log-group?profile=x&region=y   AWS CloudWatch Logs
-  file:///path/to/file.log                     Local file
-  /var/log/app.log                             Local file (shorthand)
-  @alias-name                                  Config alias
+  cloudwatch:///log-group      AWS CloudWatch Logs (use -p for profile)
+  file:///path/to/file.log     Local file
+  /var/log/app.log             Local file (shorthand)
+  @alias-name                  Config alias
 
 Configuration:
   Create ~/.clew/config.yaml to define source aliases:
 
     sources:
       prod-api:
-        uri: cloudwatch:///app/api/prod?profile=prod&region=us-east-1
+        uri: cloudwatch:///app/api/prod
       staging:
-        uri: cloudwatch:///app/api/staging?profile=staging
+        uri: cloudwatch:///app/api/staging
       local:
         uri: file:///var/log/app.log
         format: java
 
-    default_source: prod-api
+    # Default AWS profile (can override with -p flag)
+    profile: prod
 
     output:
       format: text      # text, json, csv
       timestamps: local # local, utc
 
 Examples:
-  # Query CloudWatch Logs
-  clew query "cloudwatch:///app/logs?profile=prod" -s 2h -f "error"
+  # Query CloudWatch Logs (use -p for AWS profile)
+  clew query "cloudwatch:///app/logs" -p prod -s 2h -f "error"
 
   # Query local file
   clew query /var/log/app.log -f "exception"
@@ -172,22 +172,6 @@ func getProfile() string {
 	return viper.GetString("profile")
 }
 
-// getAccountID returns the AWS account ID for the current profile.
-// Results are cached in the App to avoid repeated API calls during a session.
-// Deprecated: Use app.GetAccountID() instead when App is available.
-func getAccountID() string {
-	profile := getProfile()
-
-	// Fetch from AWS (no caching in standalone function)
-	id, err := cloudwatch.GetAccountID(profile, getRegion())
-	if err != nil {
-		Debugf("Failed to get account ID: %v", err)
-		return ""
-	}
-
-	return id
-}
-
 // getRegion returns the AWS region from flags or config.
 func getRegion() string {
 	if region != "" {
@@ -202,12 +186,6 @@ func getOutputFormat() string {
 		return outputFormat
 	}
 	return viper.GetString("output")
-}
-
-// getDefaultLogGroup returns the default log group from config.
-// Deprecated: Use source URIs or @aliases instead.
-func getDefaultLogGroup() string {
-	return viper.GetString("log_group")
 }
 
 // resolveLogGroup resolves a log group name, checking aliases first.

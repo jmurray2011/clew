@@ -27,8 +27,9 @@ var (
 )
 
 var metricsCmd = &cobra.Command{
-	Use:   "metrics",
-	Short: "Query CloudWatch Metrics",
+	Use:     "metrics",
+	Aliases: []string{"m"},
+	Short:   "Query CloudWatch Metrics",
 	Long: `Query CloudWatch Metrics to identify spikes and anomalies.
 
 Use this to find interesting time periods, then use 'clew around' to
@@ -64,8 +65,8 @@ func init() {
 	metricsCmd.Flags().StringArrayVarP(&metricsDimensions, "dimension", "d", nil, "Dimension filter (Name=Value), can be repeated")
 	metricsCmd.Flags().StringVar(&metricsStatistic, "stat", "Sum", "Statistic: Sum, Average, Minimum, Maximum, SampleCount")
 	metricsCmd.Flags().StringVar(&metricsPeriod, "period", "5m", "Period for data points (e.g., 1m, 5m, 1h)")
-	metricsCmd.Flags().StringVarP(&metricsStartTime, "start", "s", "1h", "Start time (duration like 1h, 24h, 7d or RFC3339)")
-	metricsCmd.Flags().StringVar(&metricsEndTime, "end", "", "End time (default: now)")
+	metricsCmd.Flags().StringVarP(&metricsStartTime, "since", "s", "1h", "Start time (duration like 1h, 24h, 7d or RFC3339)")
+	metricsCmd.Flags().StringVarP(&metricsEndTime, "until", "u", "", "End time (default: now)")
 	metricsCmd.Flags().BoolVar(&metricsList, "list", false, "List available metrics instead of querying")
 }
 

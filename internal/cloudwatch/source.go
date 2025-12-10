@@ -24,6 +24,9 @@ const (
 
 	// DefaultTailPollInterval is how often to poll for new events when tailing
 	DefaultTailPollInterval = 2 * time.Second
+
+	// MaxListStreamsLimit is the max allowed by AWS DescribeLogStreams API
+	MaxListStreamsLimit = 50
 )
 
 func init() {
@@ -84,14 +87,22 @@ func NewSourceWithClient(logGroup string, client LogsClient) *Source {
 }
 
 // openSource is the SourceOpener for the cloudwatch scheme.
-func openSource(u *url.URL) (source.Source, error) {
+func openSource(u *url.URL, opts source.OpenOptions) (source.Source, error) {
 	logGroup := u.Path
 	if logGroup == "" {
 		return nil, fmt.Errorf("cloudwatch URI requires a log group path")
 	}
 
-	profile := u.Query().Get("profile")
-	region := u.Query().Get("region")
+	// Use options as defaults, URI query params override
+	profile := opts.Profile
+	if p := u.Query().Get("profile"); p != "" {
+		profile = p
+	}
+
+	region := opts.Region
+	if r := u.Query().Get("region"); r != "" {
+		region = r
+	}
 
 	return NewSource(logGroup, profile, region)
 }
@@ -242,7 +253,7 @@ func (s *Source) FetchContext(ctx context.Context, entry source.Entry, before, a
 
 // ListStreams returns available log streams.
 func (s *Source) ListStreams(ctx context.Context) ([]source.StreamInfo, error) {
-	streams, err := s.client.ListStreams(ctx, s.logGroup, "", 100, "LastEventTime")
+	streams, err := s.client.ListStreams(ctx, s.logGroup, "", MaxListStreamsLimit, "LastEventTime")
 	if err != nil {
 		return nil, err
 	}

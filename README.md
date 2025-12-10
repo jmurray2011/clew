@@ -17,8 +17,8 @@ go build -o clew .
 ## Quick Start
 
 ```bash
-# Query CloudWatch logs
-clew query cloudwatch:///app/logs?profile=prod -s 2h -f "error|exception"
+# Query CloudWatch logs (use -p for profile, -r for region)
+clew query cloudwatch:///app/logs -p prod -r us-east-1 -s 2h -f "error|exception"
 
 # Query local log files
 clew query /var/log/app.log -s 2h -f "error"
@@ -27,13 +27,13 @@ clew query /var/log/app.log -s 2h -f "error"
 clew query @prod-api -s 1h -f "timeout"
 
 # List available CloudWatch log groups
-clew groups --profile prod
+clew groups -p prod -r us-east-1
 
 # Tail logs in real-time
-clew tail -g "/app/logs" --profile prod
+clew tail cloudwatch:///app/logs -p prod -f "error"
 
 # Discover fields in structured logs (WAF, JSON)
-clew fields -g "aws-waf-logs-MyALB" --profile prod
+clew fields cloudwatch:///aws-waf-logs-MyALB -p prod
 ```
 
 ## Source URIs
@@ -42,7 +42,7 @@ clew uses URIs to identify log sources:
 
 | Format | Description |
 |--------|-------------|
-| `cloudwatch:///log-group?profile=x&region=y` | AWS CloudWatch Logs |
+| `cloudwatch:///log-group` | AWS CloudWatch Logs (use `-p`/`-r` flags for profile/region) |
 | `file:///path/to/file.log` | Local file (explicit) |
 | `/var/log/app.log` | Local file (shorthand) |
 | `@alias-name` | Configured source alias |
@@ -84,16 +84,16 @@ output:
 history_max: 50                          # Max entries to keep (default: 50)
 history_file: ~/.clew_history.json       # Custom location (optional)
 
-# Source aliases - use with @alias-name
+# Source aliases - use with @alias-name (use -p/-r flags for profile/region)
 sources:
   prod-api:
-    uri: cloudwatch:///app/api/prod?profile=prod&region=us-east-1
+    uri: cloudwatch:///app/api/prod
   staging:
-    uri: cloudwatch:///app/api/staging?profile=staging
+    uri: cloudwatch:///app/api/staging
   tomcat:
-    uri: cloudwatch:///app/tomcat/logs?profile=prod
+    uri: cloudwatch:///app/tomcat/logs
   waf:
-    uri: cloudwatch:///aws-waf-logs-MyALB?profile=prod
+    uri: cloudwatch:///aws-waf-logs-MyALB
   local:
     uri: file:///var/log/app.log
     format: java    # plain, json, syslog, java
@@ -114,11 +114,11 @@ queries:
 Once configured, use `@alias-name` to reference sources:
 
 ```bash
-# Instead of the full URI:
-clew query 'cloudwatch:///app/tomcat/logs?profile=prod' -s 1h -f "error"
+# Instead of the full URI with profile flag:
+clew query cloudwatch:///app/tomcat/logs -p prod -s 1h -f "error"
 
-# Use the source alias:
-clew query @tomcat -s 1h -f "error"
+# Use the source alias (set profile/region in config or use -p/-r flags):
+clew query @tomcat -p prod -s 1h -f "error"
 
 # Query local files
 clew query @local -s 1h -f "exception"

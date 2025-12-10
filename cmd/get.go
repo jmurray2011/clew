@@ -15,8 +15,9 @@ import (
 )
 
 var getCmd = &cobra.Command{
-	Use:   "get <ptr>",
-	Short: "Get a log event by pointer",
+	Use:     "get <ptr>",
+	Aliases: []string{"g"},
+	Short:   "Get a log event by pointer",
 	Long: `Fetch the full details of a log event using its pointer.
 
 Pointers are unique identifiers returned in query results. They can be:
