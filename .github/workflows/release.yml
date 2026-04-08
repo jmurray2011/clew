@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Run tests
+        run: go test -v -race ./...
+
+      - name: Build binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+
+          GOOS=linux   GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o clew-${VERSION}-linux-amd64 .
+          GOOS=linux   GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o clew-${VERSION}-linux-arm64 .
+          GOOS=darwin  GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o clew-${VERSION}-darwin-amd64 .
+          GOOS=darwin  GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o clew-${VERSION}-darwin-arm64 .
+          GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o clew-${VERSION}-windows-amd64.exe .
+
+      - name: Create checksums
+        run: sha256sum clew-* > checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            **Go install** (requires Go 1.23+):
+            ```bash
+            go install github.com/jmurray2011/clew@${{ github.ref_name }}
+            ```
+
+            **Binary download** (no Go required):
+            ```bash
+            # Linux (amd64)
+            curl -fsSL https://github.com/jmurray2011/clew/releases/download/${{ github.ref_name }}/clew-${{ github.ref_name }}-linux-amd64 -o clew
+            chmod +x clew && sudo mv clew /usr/local/bin/
+
+            # macOS (Apple Silicon)
+            curl -fsSL https://github.com/jmurray2011/clew/releases/download/${{ github.ref_name }}/clew-${{ github.ref_name }}-darwin-arm64 -o clew
+            chmod +x clew && sudo mv clew /usr/local/bin/
+            ```
+
+            See [README](https://github.com/jmurray2011/clew#readme) for usage.
+          files: |
+            clew-*
+            checksums.txt

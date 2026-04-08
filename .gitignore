@@ -1,0 +1,32 @@
+# Binaries
+clew
+clew.exe
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of go coverage
+*.out
+coverage.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE/Editor
+.vscode/
+.idea/
+
+# Claude
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local config (keep template, ignore personal)
+.clew.yaml
