@@ -473,54 +473,35 @@ func (c *Client) FetchContext(ctx context.Context, logGroup string, results []Lo
 	return results, nil
 }
 
-// getLogEvents fetches log events from a specific stream within a time range.
+// GetLogEvents fetches log events from a specific stream within a time range.
+// Reads backward from endTime to get the N events immediately before the match.
 // Returns events in chronological order (oldest first).
 func (c *Client) GetLogEvents(ctx context.Context, logGroup, logStream string, startTime, endTime time.Time, limit int) ([]LogEvent, error) {
-	// Use StartFromHead=true to get events from oldest to newest within the time range
-	// Then we'll take the last N events (most recent before the match)
+	// Read backward from endTime (just before the match) so we get the
+	// lines immediately preceding the error, not random lines from 30min ago.
 	input := &cloudwatchlogs.GetLogEventsInput{
 		LogGroupName:  &logGroup,
 		LogStreamName: &logStream,
 		StartTime:     aws.Int64(startTime.UnixMilli()),
 		EndTime:       aws.Int64(endTime.UnixMilli()),
-		StartFromHead: aws.Bool(true),
-		Limit:         aws.Int32(int32(limit * 2)), // Fetch 2x to account for filtering, but limit API response size
+		StartFromHead: aws.Bool(false),
+		Limit:         aws.Int32(int32(limit)),
+	}
+
+	result, err := c.client.GetLogEvents(ctx, input)
+	if err != nil {
+		return nil, err
 	}
 
 	var allEvents []LogEvent
-	const maxIterations = 5 // Limit pagination to prevent runaway API calls
-
-	// Paginate to get events in the time range
-	for i := 0; i < maxIterations; i++ {
-		result, err := c.client.GetLogEvents(ctx, input)
-		if err != nil {
-			return nil, err
+	for _, e := range result.Events {
+		if e.Timestamp == nil || e.Message == nil {
+			continue
 		}
-
-		for _, e := range result.Events {
-			if e.Timestamp == nil || e.Message == nil {
-				continue
-			}
-			allEvents = append(allEvents, LogEvent{
-				Timestamp: time.UnixMilli(*e.Timestamp),
-				Message:   *e.Message,
-			})
-		}
-
-		// Check if we have enough events or no more pages
-		// GetLogEvents returns the same token when there are no more results
-		if len(allEvents) >= limit || result.NextForwardToken == nil {
-			break
-		}
-		if input.NextToken != nil && *result.NextForwardToken == *input.NextToken {
-			break
-		}
-		input.NextToken = result.NextForwardToken
-	}
-
-	// Take only the last 'limit' events (most recent before the match)
-	if len(allEvents) > limit {
-		allEvents = allEvents[len(allEvents)-limit:]
+		allEvents = append(allEvents, LogEvent{
+			Timestamp: time.UnixMilli(*e.Timestamp),
+			Message:   *e.Message,
+		})
 	}
 
 	return allEvents, nil
