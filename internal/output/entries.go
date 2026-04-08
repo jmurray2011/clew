@@ -45,7 +45,7 @@ func (f *Formatter) formatEntriesText(entries []cloudwatch.Entry) error {
 			for _, ctx := range entry.Context.Before {
 				_, _ = fmt.Fprintln(f.writer, ui.ContextStyle.Render(fmt.Sprintf("  %s  %s",
 					ctx.Timestamp.Format("15:04:05"),
-					ctx.Message)))
+					truncateMessage(ctx.Message, 300))))
 			}
 			_, _ = fmt.Fprintln(f.writer, ui.ContextStyle.Render("--- match ---"))
 		}
