@@ -156,13 +156,29 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		app.Render.Success("Results exported to %s", exportFile)
 	}
 
+	// Default query sorts newest-first, so hitting the limit drops the oldest
+	// part of the window. Raw -q and --stats queries have their own semantics.
+	if queryString == "" && !showStats {
+		if oldest, ok := truncatedBefore(results, limit, start); ok {
+			app.Render.Warning("Results hit the limit (%d) — only covers back to %s. Use -l to increase, -f to filter, or narrow the time range.",
+				limit, oldest.Format("2006-01-02 15:04:05"))
+		}
+	}
+
 	return nil
 }
 
 // truncatedBefore reports whether a newest-first result set hit the limit
 // before covering the window back to start, returning the oldest timestamp covered.
 func truncatedBefore(results []cloudwatch.Entry, limit int, start time.Time) (time.Time, bool) {
-	return time.Time{}, false
+	if limit <= 0 || len(results) < limit {
+		return time.Time{}, false
+	}
+	oldest := results[len(results)-1].Timestamp
+	if oldest.IsZero() || !oldest.After(start.Add(time.Minute)) {
+		return time.Time{}, false
+	}
+	return oldest, true
 }
 
 // maybeCostWarning shows an interactive cost warning for wide time ranges.
