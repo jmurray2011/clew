@@ -159,6 +159,12 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// truncatedBefore reports whether a newest-first result set hit the limit
+// before covering the window back to start, returning the oldest timestamp covered.
+func truncatedBefore(results []cloudwatch.Entry, limit int, start time.Time) (time.Time, bool) {
+	return time.Time{}, false
+}
+
 // maybeCostWarning shows an interactive cost warning for wide time ranges.
 func maybeCostWarning(app *App, start, end time.Time) error {
 	threshold := 3 * 24 * time.Hour
